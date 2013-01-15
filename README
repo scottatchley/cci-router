@@ -1,4 +1,30 @@
+Copyright © 2013 UT-Battelle, LLC.  All rights reserved.
+
+$COPYRIGHT$
+
+Additional copyrights may follow
+
+$HEADER$
+
 cci-router
 ==========
 
 A routing daemon for CCI
+
+= Requesting help ==============================================================
+
+To request help using CCI routers, please subscribe to the users list at:
+
+        http://lists.cci-forum.com/listinfo.cgi/cci-users-cci-forum.com
+
+Once subscribed, you will be able to send email to:
+
+        cci-users@lists.cci-forum.com.
+
+Please include a detailed description of the issue as well as your
+test environment. This is a useful guide for preparing help requests:
+
+        http://www.chiark.greenend.org.uk/~sgtatham/bugs.html
+
+Thank you for using CCI routers.
+
