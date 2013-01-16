@@ -15,17 +15,17 @@ AC_DEFUN([CCIR_DEFINE_ARGS],[
                  [AC_MSG_WARN([Developer build: enabling pickyness by default])
                   enable_picky=yes])])
     # If we want picky, be picky.
-    CCIR_C_COMPILER_VENDOR([cci_cc_vendor])
-    AS_IF([test "$enable_picky" = yes -a "$cci_cc_vendor" = "gnu"],
-          [cci_add="-Wall -Wundef -Wsign-compare"
-           cci_add="$cci_add -Wmissing-prototypes -Wstrict-prototypes"
-           cci_add="$cci_add -Wcomment -pedantic"
-           cci_add="$cci_add -Werror-implicit-function-declaration "
-           cci_add="$cci_add -Wstrict-prototypes"
-           CFLAGS="$CFLAGS $cci_add"
+    CCIR_C_COMPILER_VENDOR([ccir_cc_vendor])
+    AS_IF([test "$enable_picky" = yes -a "$ccir_cc_vendor" = "gnu"],
+          [ccir_add="-Wall -Wundef -Wsign-compare"
+           ccir_add="$ccir_add -Wmissing-prototypes -Wstrict-prototypes"
+           ccir_add="$ccir_add -Wcomment -pedantic"
+           ccir_add="$ccir_add -Werror-implicit-function-declaration "
+           ccir_add="$ccir_add -Wstrict-prototypes"
+           CFLAGS="$CFLAGS $ccir_add"
            CCIR_UNIQ(CFLAGS)
-           AC_MSG_WARN([$cci_add has been added to CFLAGS (--enable-picky)])
-           unset cci_add])
+           AC_MSG_WARN([$ccir_add has been added to CFLAGS (--enable-picky)])
+           unset ccir_add])
     AS_IF([test "$CCIR_DEVEL_BUILD" = "yes"],
           [AC_MSG_WARN([-g has been added to CFLAGS (developer build)])
            CFLAGS="$CFLAGS -g"])

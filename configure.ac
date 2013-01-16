@@ -15,12 +15,14 @@ AC_CONFIG_AUX_DIR([./config])
 AC_CONFIG_MACRO_DIR([./config])
 
 AM_INIT_AUTOMAKE([dist-bzip2 subdir-objects foreign tar-ustar -Wall -Werror])
+m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 AC_PROG_CC
 AC_PROG_INSTALL
 AC_PROG_RANLIB
 AM_PROG_CC_C_O
 
+AC_CONFIG_HEADERS([config.h])
 
 CCIR_DEFINE_ARGS
 CCIR_CHECK_CCI
