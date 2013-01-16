@@ -17,7 +17,12 @@ AC_CONFIG_MACRO_DIR([./config])
 AM_INIT_AUTOMAKE([dist-bzip2 subdir-objects foreign tar-ustar -Wall -Werror])
 
 AC_PROG_CC
+AC_PROG_INSTALL
+AC_PROG_RANLIB
+AM_PROG_CC_C_O
 
+
+CCIR_DEFINE_ARGS
 CCIR_CHECK_CCI
 
 AC_CONFIG_FILES([Makefile src/Makefile])
