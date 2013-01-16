@@ -13,14 +13,34 @@
 
 #include "cci.h"
 
-int main(int argc, char *argv[])
+static int
+get_config(void)
+{
+	int ret = 0;
+	return ret;
+}
+
+int
+main(int argc, char *argv[])
 {
 	int ret = 0;
 	uint32_t caps = 0;
 
+	ret = get_config();
+	if (ret) {
+		fprintf(stderr, "Unable to find configuration file\n");
+		exit(EXIT_FAILURE);
+	}
+
 	ret = cci_init(CCI_ABI_VERSION, 0, &caps);
 	if (ret != CCI_SUCCESS) {
 		fprintf(stderr, "Unable to init CCI\n");
+		exit(EXIT_FAILURE);
+	}
+
+	ret = cci_finalize();
+	if (ret) {
+		fprintf(stderr, "Unable to finalize CCI\n");
 		exit(EXIT_FAILURE);
 	}
 
