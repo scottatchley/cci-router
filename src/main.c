@@ -15,7 +15,7 @@
 
 #include "cci.h"
 
-#define MAX_LEN	(128)
+#define MAX_TRANSPORT_LEN	(128)
 
 static void
 usage(char *procname)
@@ -47,7 +47,7 @@ open_endpoints(char *transports, cci_endpoint_t ***eps, int *count)
 {
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
-	cci_endpoint_t *e = NULL, **es = NULL;
+	cci_endpoint_t **es = NULL, **new = NULL;
 
 	ret = cci_get_devices(&devs);
 	if (ret) {
@@ -56,15 +56,24 @@ open_endpoints(char *transports, cci_endpoint_t ***eps, int *count)
 		goto out;
 	}
 
+	for (i = 0; ; i++)
+		if (!devs[i])
+			break;
+
+	es = calloc(i, sizeof(*es));
+	if (!es) {
+		fprintf(stderr, "Failed to alloc endpoints\n");
+		ret = ENOMEM;
+		goto out;
+	}
+
 	for (i = 0; ; i++) {
 		if (devs[i]) {
 			const char *s = devs[i]->transport;
-			int len = strnlen(transports, MAX_LEN);
+			int len = strnlen(transports, MAX_TRANSPORT_LEN);
 
 			if (strnstr(transports, s, len)) {
-				cci_endpoint_t **new = NULL;
-
-				ret = cci_create_endpoint(devs[i], 0, &e, NULL);
+				ret = cci_create_endpoint(devs[i], 0, &es[cnt], NULL);
 				if (ret) {
 					fprintf(stderr, "Unable to create endpoint "
 							"on device %s (%s)\n",
@@ -73,23 +82,21 @@ open_endpoints(char *transports, cci_endpoint_t ***eps, int *count)
 					continue;
 				}
 				cnt++;
-
-				new = realloc(es, cnt * sizeof(*es));
-				if (!new) {
-					fprintf(stderr, "realloc failed - unable "
-							"to open endpoints\n");
-					/* TODO close each endpoint */
-					free(es);
-					ret = -1;
-					goto out;
-				}
-				new[cnt - 1] = e;
-				es = new;
 			}
 		} else {
 			break;
 		}
 	}
+	new = realloc(es, cnt * sizeof(*es));
+	if (new) {
+		es = new;
+	} else {
+		fprintf(stderr, "Unable to shorten the endpoint array\n");
+	}
+
+	if (cnt < 2)
+		fprintf(stderr, "Unable to route with %d endpoint%s.\n",
+				cnt, cnt == 0 ? "s" : "");
 
 	*eps = es;
 	*count = cnt;
