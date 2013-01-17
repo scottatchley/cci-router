@@ -15,16 +15,12 @@
 
 #include "cci.h"
 
-#define MAX_TRANSPORT_LEN	(128)
-
 static void
 usage(char *procname)
 {
-	fprintf(stderr, "usage: %s [-f <config_file>] "
-			"[-t <transport1>[,<transport2>[,...]]]\n", procname);
+	fprintf(stderr, "usage: %s [-f <config_file>]\n", procname);
 	fprintf(stderr, "where:\n");
 	fprintf(stderr, "\t-f\tUse this configuration file.\n");
-	fprintf(stderr, "\t-t\tUse this comma separated list of transports\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -43,7 +39,7 @@ get_config(char *config_file)
 }
 
 static int
-open_endpoints(char *transports, cci_endpoint_t ***eps, int *count)
+open_endpoints(cci_endpoint_t ***eps, int *count)
 {
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
@@ -69,20 +65,27 @@ open_endpoints(char *transports, cci_endpoint_t ***eps, int *count)
 
 	for (i = 0; ; i++) {
 		if (devs[i]) {
-			const char *s = devs[i]->transport;
-			int len = strnlen(transports, MAX_TRANSPORT_LEN);
+			ret = cci_create_endpoint(devs[i], 0, &es[cnt], NULL);
+			if (ret) {
+				fprintf(stderr, "Unable to create endpoint "
+						"on device %s (%s)\n",
+						devs[i]->name,
+						cci_strerror(NULL, ret));
+				for (i = i - 1; i >= 0; i--) {
+					int ret2 = 0;
 
-			if (strnstr(transports, s, len)) {
-				ret = cci_create_endpoint(devs[i], 0, &es[cnt], NULL);
-				if (ret) {
-					fprintf(stderr, "Unable to create endpoint "
-							"on device %s (%s)\n",
-							devs[i]->name,
-							cci_strerror(NULL, ret));
-					continue;
+					ret2 = cci_destroy_endpoint(es[i]);
+					if (ret2) {
+						fprintf(stderr, "Unable to destroy "
+								"endpoint %d (%s)\n",
+								i,
+								cci_strerror(NULL, ret2));
+					}
 				}
-				cnt++;
+				free(es);
+				goto out;
 			}
+			cnt++;
 		} else {
 			break;
 		}
@@ -109,23 +112,15 @@ main(int argc, char *argv[])
 {
 	int ret = 0, c, count = 0, i;
 	char *config_file = NULL;
-	char *transports = NULL;
 	uint32_t caps = 0;
 	cci_endpoint_t **eps = NULL;
 
-	while ((c = getopt(argc, argv, "f:t:")) != -1) {
+	while ((c = getopt(argc, argv, "f:")) != -1) {
 		switch (c) {
 		case 'f':
 			config_file = strdup(optarg);
 			if (!config_file) {
 				fprintf(stderr, "Unable to store file name - no memory\n");
-				exit(EXIT_FAILURE);
-			}
-			break;
-		case 't':
-			transports = strdup(optarg);
-			if (!transports) {
-				fprintf(stderr, "Unable to store list of transports - no memory\n");
 				exit(EXIT_FAILURE);
 			}
 			break;
@@ -146,7 +141,7 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	ret = open_endpoints(transports, &eps, &count);
+	ret = open_endpoints(&eps, &count);
 	if (ret) {
 		fprintf(stderr, "Unable to open CCI endpoints.\n");
 		goto out_w_init;
