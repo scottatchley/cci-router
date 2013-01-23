@@ -189,9 +189,42 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 		goto out;
 	}
 
-	for (i = 0; ; i++)
-		if (!devs[i])
+	/* Count devices and make sure that they have specified
+	 * as, subnet, and at least one router */
+	for (i = 0; ; i++) {
+		int j = 0, as = 0, subnet = 0, router = 0;
+		const char *arg = NULL;
+		cci_device_t *d = devs[i];
+
+		if (!d)
 			break;
+
+		for (j = 0; ;j++) {
+			arg = d->conf_argv[j];
+			if (!arg)
+				break;
+			if (0 == strncmp("as=", arg, 3)) {
+				as++;
+			} else if (0 == strncmp("subnet=", arg, 7)) {
+				subnet++;
+			} else if (0 == strncmp("router=", arg, 7)) {
+				router++;
+			}
+		}
+
+		if (!as || !subnet || !router) {
+			fprintf(stderr, "Device [%s] is missing keyword/values "
+					"for as=, subnet=, and/or router=\n", d->name);
+			ret = EINVAL;
+			goto out;
+		} else if ((as > 1) || (subnet > 1)) {
+			fprintf(stderr, "Device [%s] has more than one keyword/value "
+					"for as= or subnet=\n", d->name);
+			ret = EINVAL;
+			goto out;
+		}
+
+	}
 
 	es = calloc(i, sizeof(*es));
 	if (!es) {
