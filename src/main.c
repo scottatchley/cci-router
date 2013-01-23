@@ -12,6 +12,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <libgen.h>
+#include <sys/param.h>
 
 #include "cci.h"
 
@@ -24,16 +28,149 @@ usage(char *procname)
 	exit(EXIT_FAILURE);
 }
 
+/* Return 0 on success, errno otherwise */
+static int
+check_file(char *fname)
+{
+	int ret = 0;
+	struct stat buf;
+
+	ret = stat(fname, &buf);
+	if (ret) {
+		ret = errno;
+		fprintf(stderr, "Cannot access config file %s due to \"%s\".\n",
+				fname, strerror(ret));
+	} else if (buf.st_size == 0) {
+		ret = EINVAL;
+		fprintf(stderr, "Config file %s is empty.\n", fname);
+	}
+	return ret;
+}
+
 /* Hierarchy of config processing:
  * 1. Command line options
  * 2. Command line config file
- * 3. Local config file ($PWD/ccir_config)
- * 4. Global config file (/etc/ccir/config)
+ * 3. CCI_CONFIG environment variable
+ * 4. Local config file ($PWD/ccir_config)
+ * 5. CCIR installed config file (/$INSTALL_PATH/etc/ccir/config)
+ * 6. Global config file (/etc/ccir/config)
  */
 static int
-get_config(char *config_file)
+get_config(char *procname, char *config_option)
 {
-	int ret = 0;
+	int ret = 0, done = 0;
+	char *cci_config = NULL;
+
+	if (config_option) {
+		/* see if it exists and is not empty, if so use it */
+		ret = check_file(config_option);
+		if (ret) {
+			config_option = NULL;
+		} else {
+			done = 1;
+		}
+	}
+
+	cci_config = getenv("CCI_CONFIG");
+	if (cci_config) {
+		ret = check_file(cci_config);
+		if (ret) {
+			cci_config = NULL;
+		} else {
+			done = 1;
+		}
+	}
+
+	/* we have a valid config_option, cci_config, or both */
+	if (done) {
+		int overwrite = 0;
+
+		if (config_option) {
+			if (cci_config) {
+				overwrite = 1;
+				fprintf(stderr, "Replacing CCI_CONFIG=%s with %s\n",
+						cci_config, config_option);
+			}
+			ret = setenv("CCI_CONFIG", config_option, overwrite);
+			if (ret) {
+				ret = errno; /* ENOMEM */
+				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+						strerror(ret));
+			}
+		}
+	}
+
+	/* check for local config */
+	if (!done) {
+		char *fname = "ccir_config";
+
+		ret = check_file(fname);
+		if (!ret) {
+			ret = setenv("CCI_CONFIG", fname, 0);
+			if (ret) {
+				ret = errno; /* ENOMEM */
+				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+						strerror(ret));
+			}
+			done = 1;
+		}
+	}
+
+	/* check for installed config */
+	if (!done) {
+		char *installdir = NULL, *bindir = NULL, fname[MAXPATHLEN];
+		char *etcdir = "/etc/ccir/config";
+
+		installdir = dirname(procname);
+
+		bindir = strstr(installdir, "/bin");
+		if (bindir) {
+			*bindir = '\0';
+			memset(fname, 0, MAXPATHLEN);
+			if ((strlen(installdir) + strlen(etcdir)) < MAXPATHLEN) {
+				strcat(fname, installdir);
+				strcat(fname, etcdir);
+				ret = check_file(fname);
+				if (!ret) {
+					ret = setenv("CCI_CONFIG", fname, 0);
+					if (ret) {
+						ret = errno; /* ENOMEM */
+						fprintf(stderr, "Unable to setenv"
+								"(CCI_CONFIG) (%s)\n",
+								strerror(ret));
+					}
+					done = 1;
+				}
+			}
+		}
+	}
+
+	/* check for global config */
+	if (!done) {
+		char *fname = "/etc/ccir/config";
+
+		ret = check_file(fname);
+		if (!ret) {
+			ret = setenv("CCI_CONFIG", fname, 0);
+			if (ret) {
+				ret = errno; /* ENOMEM */
+				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+						strerror(ret));
+			}
+			done = 1;
+		}
+	}
+
+	if (!done || ret) {
+		fprintf(stderr, "Unable to find configuration file.\n");
+		fprintf(stderr, "Precedence of config file processing:\n");
+		fprintf(stderr, "1. Command line config file option -f <file>\n");
+		fprintf(stderr, "2. CCI_CONFIG environment variable\n");
+		fprintf(stderr, "3. Local config file ($PWD/ccir_config)\n");
+		fprintf(stderr, "4. CCIR installed config file "
+				"(/$INSTALL_PATH/etc/ccir/config)\n");
+		fprintf(stderr, "5. Global config file (/etc/ccir/config)\n");
+	}
 
 	return ret;
 }
@@ -129,9 +266,8 @@ main(int argc, char *argv[])
 		}
 	}
 
-	ret = get_config(config_file);
+	ret = get_config(argv[0], config_file);
 	if (ret) {
-		fprintf(stderr, "Unable to find configuration file\n");
 		exit(EXIT_FAILURE);
 	}
 
