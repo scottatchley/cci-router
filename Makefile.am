@@ -5,7 +5,7 @@
 
 ACLOCAL_AMFLAGS = -I ./config
 
-SUBDIRS = src
+SUBDIRS = include src
 
 EXTRA_DIST =				\
 	COPYING				\

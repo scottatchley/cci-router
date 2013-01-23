@@ -17,7 +17,7 @@
 #include <libgen.h>
 #include <sys/param.h>
 
-#include "cci.h"
+#include "cci-router.h"
 
 static void
 usage(char *procname)
@@ -26,6 +26,12 @@ usage(char *procname)
 	fprintf(stderr, "where:\n");
 	fprintf(stderr, "\t-f\tUse this configuration file.\n");
 	exit(EXIT_FAILURE);
+}
+
+static void
+start_routing(cci_endpoint_t **eps)
+{
+	return;
 }
 
 /* Return 0 on success, errno otherwise */
@@ -315,6 +321,9 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Unable to open CCI endpoints.\n");
 		goto out_w_init;
 	}
+
+	/* We have the endpoints, start discovery and routing */
+	start_routing(eps);
 
 	for (i = 0; i < count; i++)
 		cci_destroy_endpoint(eps[i]);

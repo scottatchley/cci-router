@@ -40,4 +40,7 @@ AC_DEFUN([CCIR_DEFINE_ARGS],[
                        [:],
                        [[#include <valgrind/memcheck.h>]])
     fi
+
+    # Add relevant -I's for our internal header files
+    CPPFLAGS="$CPPFLAGS -I$srcdir/../include"
 ])

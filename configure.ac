@@ -22,11 +22,11 @@ AC_PROG_INSTALL
 AC_PROG_RANLIB
 AM_PROG_CC_C_O
 
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([include/config.h])
 
 CCIR_DEFINE_ARGS
 CCIR_CHECK_CCI
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile src/Makefile])
 
 AC_OUTPUT

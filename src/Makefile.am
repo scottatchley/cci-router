@@ -4,4 +4,4 @@
 #
 
 bin_PROGRAMS = cci-router
-cci_router_SOURCES = main.c
+cci_router_SOURCES = main.c cci-router.h
