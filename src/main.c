@@ -19,6 +19,8 @@
 
 #include "cci-router.h"
 
+int verbose = 0;
+
 static void
 usage(char *procname)
 {
@@ -29,7 +31,7 @@ usage(char *procname)
 }
 
 static void
-start_routing(cci_endpoint_t **eps)
+start_routing(cci_endpoint_t **eps, int count)
 {
 	return;
 }
@@ -44,11 +46,13 @@ check_file(char *fname)
 	ret = stat(fname, &buf);
 	if (ret) {
 		ret = errno;
-		fprintf(stderr, "Cannot access config file %s due to \"%s\".\n",
+		if (verbose)
+			fprintf(stderr, "Cannot access config file %s due to \"%s\".\n",
 				fname, strerror(ret));
 	} else if (buf.st_size == 0) {
 		ret = EINVAL;
-		fprintf(stderr, "Config file %s is empty.\n", fname);
+		if (verbose)
+			fprintf(stderr, "Config file %s is empty.\n", fname);
 	}
 	return ret;
 }
@@ -94,13 +98,15 @@ get_config(char *procname, char *config_option)
 		if (config_option) {
 			if (cci_config) {
 				overwrite = 1;
-				fprintf(stderr, "Replacing CCI_CONFIG=%s with %s\n",
+				if (verbose)
+					fprintf(stderr, "Replacing CCI_CONFIG=%s with %s\n",
 						cci_config, config_option);
 			}
 			ret = setenv("CCI_CONFIG", config_option, overwrite);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+				if (verbose)
+					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
 		}
@@ -115,7 +121,8 @@ get_config(char *procname, char *config_option)
 			ret = setenv("CCI_CONFIG", fname, 0);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+				if (verbose)
+					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
 			done = 1;
@@ -141,7 +148,8 @@ get_config(char *procname, char *config_option)
 					ret = setenv("CCI_CONFIG", fname, 0);
 					if (ret) {
 						ret = errno; /* ENOMEM */
-						fprintf(stderr, "Unable to setenv"
+						if (verbose)
+							fprintf(stderr, "Unable to setenv"
 								"(CCI_CONFIG) (%s)\n",
 								strerror(ret));
 					}
@@ -160,7 +168,8 @@ get_config(char *procname, char *config_option)
 			ret = setenv("CCI_CONFIG", fname, 0);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+				if (verbose)
+					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
 			done = 1;
@@ -186,7 +195,7 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 {
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
-	cci_endpoint_t **es = NULL, **new = NULL;
+	cci_endpoint_t **es = NULL;
 
 	ret = cci_get_devices(&devs);
 	if (ret) {
@@ -232,7 +241,10 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 
 	}
 
-	es = calloc(i, sizeof(*es));
+	cnt = i;
+
+	/* NULL terminated array */
+	es = calloc(cnt + 1, sizeof(*es));
 	if (!es) {
 		fprintf(stderr, "Failed to alloc endpoints\n");
 		ret = ENOMEM;
@@ -241,7 +253,7 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 
 	for (i = 0; ; i++) {
 		if (devs[i]) {
-			ret = cci_create_endpoint(devs[i], 0, &es[cnt], NULL);
+			ret = cci_create_endpoint(devs[i], 0, &es[i], NULL);
 			if (ret) {
 				fprintf(stderr, "Unable to create endpoint "
 						"on device %s (%s)\n",
@@ -261,16 +273,9 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 				free(es);
 				goto out;
 			}
-			cnt++;
 		} else {
 			break;
 		}
-	}
-	new = realloc(es, cnt * sizeof(*es));
-	if (new) {
-		es = new;
-	} else {
-		fprintf(stderr, "Unable to shorten the endpoint array\n");
 	}
 
 	if (cnt < 2)
@@ -291,7 +296,7 @@ main(int argc, char *argv[])
 	uint32_t caps = 0;
 	cci_endpoint_t **eps = NULL;
 
-	while ((c = getopt(argc, argv, "f:")) != -1) {
+	while ((c = getopt(argc, argv, "f:v")) != -1) {
 		switch (c) {
 		case 'f':
 			config_file = strdup(optarg);
@@ -299,6 +304,9 @@ main(int argc, char *argv[])
 				fprintf(stderr, "Unable to store file name - no memory\n");
 				exit(EXIT_FAILURE);
 			}
+			break;
+		case 'v':
+			verbose++;
 			break;
 		default:
 			usage(argv[0]);
@@ -323,7 +331,7 @@ main(int argc, char *argv[])
 	}
 
 	/* We have the endpoints, start discovery and routing */
-	start_routing(eps);
+	start_routing(eps, count);
 
 	for (i = 0; i < count; i++)
 		cci_destroy_endpoint(eps[i]);
