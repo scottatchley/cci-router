@@ -16,29 +16,96 @@
 #include <errno.h>
 #include <libgen.h>
 #include <sys/param.h>
+#include <signal.h>
 
 #include "cci-router.h"
 
-int verbose = 0;
+int running = 0;
+
 
 static void
 usage(char *procname)
 {
-	fprintf(stderr, "usage: %s [-f <config_file>]\n", procname);
+	fprintf(stderr, "usage: %s [-f <config_file>] [-v] [-b]\n", procname);
 	fprintf(stderr, "where:\n");
 	fprintf(stderr, "\t-f\tUse this configuration file.\n");
+	fprintf(stderr, "\t-v\tVerbose output (-v[v[v]])\n");
+	fprintf(stderr, "\t-b\tBlocking mode instead of polling mode\n");
 	exit(EXIT_FAILURE);
 }
 
-static void
-start_routing(ccir_ep_t **eps, int count)
+static void handle_sigterm(int signum)
 {
+	running = 0;
+	return;
+}
+
+static int install_handlers(ccir_globals_t *globals)
+{
+	int ret = 0;
+	struct sigaction sa;
+
+	sa.sa_handler = handle_sigterm;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+
+	ret = sigaction(SIGTERM, &sa, NULL);
+	if (ret == -1) {
+		ret = errno;
+		goto out;
+	}
+
+	ret = sigaction(SIGINT, &sa, NULL);
+	if (ret == -1) {
+		ret = errno;
+		goto out;
+	}
+
+	ret = sigaction(SIGHUP, &sa, NULL);
+	if (ret == -1) {
+		ret = errno;
+		goto out;
+	}
+out:
+	if (ret && globals->verbose)
+		fprintf(stderr, "%s: sigaction failed with %s\n",
+				__func__, strerror(ret));
+	return ret;
+}
+
+static int
+get_event(ccir_globals_t *globals)
+{
+	int ret = 0;
+
+
+	return ret;
+}
+
+static void
+start_routing(ccir_globals_t *globals)
+{
+	int ret = 0;
+
+	running = 1;
+
+	ret = install_handlers(globals);
+	if (ret)
+		goto out;
+
+	while (running) {
+		get_event(globals);
+	}
+
+	if (globals->verbose)
+		fprintf(stdout, "Exiting %s\n", __func__);
+out:
 	return;
 }
 
 /* Return 0 on success, errno otherwise */
 static int
-check_file(char *fname)
+check_file(ccir_globals_t *globals, char *fname)
 {
 	int ret = 0;
 	struct stat buf;
@@ -46,12 +113,12 @@ check_file(char *fname)
 	ret = stat(fname, &buf);
 	if (ret) {
 		ret = errno;
-		if (verbose)
+		if (globals->verbose)
 			fprintf(stderr, "Cannot access config file %s due to \"%s\".\n",
 				fname, strerror(ret));
 	} else if (buf.st_size == 0) {
 		ret = EINVAL;
-		if (verbose)
+		if (globals->verbose)
 			fprintf(stderr, "Config file %s is empty.\n", fname);
 	}
 	return ret;
@@ -66,14 +133,14 @@ check_file(char *fname)
  * 6. Global config file (/etc/ccir/config)
  */
 static int
-get_config(char *procname, char *config_option)
+get_config(ccir_globals_t *globals, char *procname, char *config_option)
 {
 	int ret = 0, done = 0;
 	char *cci_config = NULL;
 
 	if (config_option) {
 		/* see if it exists and is not empty, if so use it */
-		ret = check_file(config_option);
+		ret = check_file(globals, config_option);
 		if (ret) {
 			config_option = NULL;
 		} else {
@@ -83,7 +150,7 @@ get_config(char *procname, char *config_option)
 
 	cci_config = getenv("CCI_CONFIG");
 	if (cci_config) {
-		ret = check_file(cci_config);
+		ret = check_file(globals, cci_config);
 		if (ret) {
 			cci_config = NULL;
 		} else {
@@ -98,14 +165,14 @@ get_config(char *procname, char *config_option)
 		if (config_option) {
 			if (cci_config) {
 				overwrite = 1;
-				if (verbose)
+				if (globals->verbose)
 					fprintf(stderr, "Replacing CCI_CONFIG=%s with %s\n",
 						cci_config, config_option);
 			}
 			ret = setenv("CCI_CONFIG", config_option, overwrite);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				if (verbose)
+				if (globals->verbose)
 					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
@@ -116,12 +183,12 @@ get_config(char *procname, char *config_option)
 	if (!done) {
 		char *fname = "ccir_config";
 
-		ret = check_file(fname);
+		ret = check_file(globals, fname);
 		if (!ret) {
 			ret = setenv("CCI_CONFIG", fname, 0);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				if (verbose)
+				if (globals->verbose)
 					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
@@ -143,12 +210,12 @@ get_config(char *procname, char *config_option)
 			if ((strlen(installdir) + strlen(etcdir)) < MAXPATHLEN) {
 				strcat(fname, installdir);
 				strcat(fname, etcdir);
-				ret = check_file(fname);
+				ret = check_file(globals, fname);
 				if (!ret) {
 					ret = setenv("CCI_CONFIG", fname, 0);
 					if (ret) {
 						ret = errno; /* ENOMEM */
-						if (verbose)
+						if (globals->verbose)
 							fprintf(stderr, "Unable to setenv"
 								"(CCI_CONFIG) (%s)\n",
 								strerror(ret));
@@ -163,12 +230,12 @@ get_config(char *procname, char *config_option)
 	if (!done) {
 		char *fname = "/etc/ccir/config";
 
-		ret = check_file(fname);
+		ret = check_file(globals, fname);
 		if (!ret) {
 			ret = setenv("CCI_CONFIG", fname, 0);
 			if (ret) {
 				ret = errno; /* ENOMEM */
-				if (verbose)
+				if (globals->verbose)
 					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
 						strerror(ret));
 			}
@@ -191,15 +258,18 @@ get_config(char *procname, char *config_option)
 }
 
 static void
-close_endpoints(ccir_ep_t **eps, int count)
+close_endpoints(ccir_globals_t *globals)
 {
 	int i = 0;
 
-	if (!eps)
+	if (globals->verbose)
+		fprintf(stdout, "Entering %s\n", __func__);
+
+	if (!globals->eps)
 		return;
 
-	for (i = 0; i < count; i++) {
-		ccir_ep_t *ep = eps[i];
+	for (i = 0; i < globals->count; i++) {
+		ccir_ep_t *ep = globals->eps[i];
 
 		if (!ep)
 			break;
@@ -229,13 +299,16 @@ close_endpoints(ccir_ep_t **eps, int count)
 		}
 		free(ep);
 	}
-	free(eps);
+	free(globals->eps);
+
+	if (globals->verbose)
+		fprintf(stdout, "Leaving %s\n", __func__);
 
 	return;
 }
 
 static int
-open_endpoints(ccir_ep_t ***eps, int *count)
+open_endpoints(ccir_globals_t *globals)
 {
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
@@ -270,6 +343,7 @@ open_endpoints(ccir_ep_t ***eps, int *count)
 		cci_device_t *d = devs[i];
 		ccir_ep_t *ep = NULL;
 		ccir_peer_t *peer = NULL;
+		cci_os_handle_t *fd = NULL;
 
 		if (!d)
 			break;
@@ -334,7 +408,10 @@ open_endpoints(ccir_ep_t ***eps, int *count)
 			ep->peer_cnt = router;
 		}
 
-		ret = cci_create_endpoint(d, 0, &(ep->e), NULL);
+		if (globals->blocking)
+			fd = &ep->fd;
+
+		ret = cci_create_endpoint(d, 0, &(ep->e), fd);
 		if (ret) {
 			fprintf(stderr, "Unable to create endpoint "
 					"on device %s (%s)\n",
@@ -349,11 +426,11 @@ open_endpoints(ccir_ep_t ***eps, int *count)
 		fprintf(stderr, "Unable to route with %d endpoint%s.\n",
 				cnt, cnt == 0 ? "s" : "");
 
-	*eps = es;
-	*count = cnt;
+	globals->eps = es;
+	globals->count = cnt;
 out:
 	if (ret)
-		close_endpoints(es, cnt);
+		close_endpoints(globals);
 
 	return ret;
 }
@@ -361,12 +438,18 @@ out:
 int
 main(int argc, char *argv[])
 {
-	int ret = 0, c, count = 0;
+	int ret = 0, c;
 	char *config_file = NULL;
 	uint32_t caps = 0;
-	ccir_ep_t **eps = NULL;
+	ccir_globals_t *globals = NULL;
 
-	while ((c = getopt(argc, argv, "f:v")) != -1) {
+	globals = calloc(1, sizeof(*globals));
+	if (!globals) {
+		ret = ENOMEM;
+		goto out;
+	}
+
+	while ((c = getopt(argc, argv, "f:vb")) != -1) {
 		switch (c) {
 		case 'f':
 			config_file = strdup(optarg);
@@ -376,14 +459,17 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'v':
-			verbose++;
+			globals->verbose++;
+			break;
+		case 'b':
+			globals->blocking = 1;
 			break;
 		default:
 			usage(argv[0]);
 		}
 	}
 
-	ret = get_config(argv[0], config_file);
+	ret = get_config(globals, argv[0], config_file);
 	if (ret) {
 		exit(EXIT_FAILURE);
 	}
@@ -394,16 +480,16 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	ret = open_endpoints(&eps, &count);
+	ret = open_endpoints(globals);
 	if (ret) {
 		fprintf(stderr, "Unable to open CCI endpoints.\n");
 		goto out_w_init;
 	}
 
 	/* We have the endpoints, start discovery and routing */
-	start_routing(eps, count);
+	start_routing(globals);
 
-	close_endpoints(eps, count);
+	close_endpoints(globals);
 
 out_w_init:
 	ret = cci_finalize();
@@ -412,5 +498,9 @@ out_w_init:
 		exit(EXIT_FAILURE);
 	}
 
-	return 0;
+	if (globals->verbose)
+		fprintf(stdout, "%s is done\n", argv[0]);
+
+out:
+	return ret;
 }
