@@ -31,7 +31,7 @@ usage(char *procname)
 }
 
 static void
-start_routing(cci_endpoint_t **eps, int count)
+start_routing(ccir_ep_t **eps, int count)
 {
 	return;
 }
@@ -190,12 +190,56 @@ get_config(char *procname, char *config_option)
 	return ret;
 }
 
+static void
+close_endpoints(ccir_ep_t **eps, int count)
+{
+	int i = 0;
+
+	if (!eps)
+		return;
+
+	for (i = 0; i < count; i++) {
+		ccir_ep_t *ep = eps[i];
+
+		if (!ep)
+			break;
+
+		if (ep->e) {
+			int rc = 0;
+
+			rc = cci_destroy_endpoint(ep->e);
+			if (rc) {
+				fprintf(stderr, "%s: cci_destroy_endpoint() "
+						"failed with %s\n",
+						__func__, cci_strerror(NULL, rc));
+			}
+		}
+
+		if (ep->peers) {
+			int j = 0;
+
+			for (j = 0; j < ep->peer_cnt; j++) {
+				ccir_peer_t *p = ep->peers[j];
+				if (!p)
+					break;
+				free(p->uri);
+				free(p);
+			}
+			free(ep->peers);
+		}
+		free(ep);
+	}
+	free(eps);
+
+	return;
+}
+
 static int
-open_endpoints(cci_endpoint_t ***eps, int *count)
+open_endpoints(ccir_ep_t ***eps, int *count)
 {
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
-	cci_endpoint_t **es = NULL;
+	ccir_ep_t **es = NULL;
 
 	ret = cci_get_devices(&devs);
 	if (ret) {
@@ -204,26 +248,67 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 		goto out;
 	}
 
-	/* Count devices and make sure that they have specified
+	/* Count devices */
+	for (cnt = 0; ; cnt++) {
+		if (!devs[cnt])
+			break;
+	}
+
+	/* NULL terminated array */
+	es = calloc(cnt + 1, sizeof(*es));
+	if (!es) {
+		fprintf(stderr, "Failed to alloc endpoints\n");
+		ret = ENOMEM;
+		goto out;
+	}
+
+	/* Make sure that the devices have specified
 	 * as, subnet, and at least one router */
-	for (i = 0; ; i++) {
+	for (i = 0; i < cnt; i++) {
 		int j = 0, as = 0, subnet = 0, router = 0;
 		const char *arg = NULL;
 		cci_device_t *d = devs[i];
+		ccir_ep_t *ep = NULL;
+		ccir_peer_t *peer = NULL;
 
 		if (!d)
 			break;
+
+		ep = calloc(1, sizeof(*ep));
+		if (!ep) {
+			ret = ENOMEM;
+			goto out;
+		}
+		es[i] = ep;
+
+		ep->peers = calloc(CCIR_MAX_PEERS, sizeof(*ep->peers));
+		if (!ep->peers) {
+			ret = ENOMEM;
+			goto out;
+		}
 
 		for (j = 0; ;j++) {
 			arg = d->conf_argv[j];
 			if (!arg)
 				break;
 			if (0 == strncmp("as=", arg, 3)) {
+				ep->as = strtol(arg + 3, NULL, 0);
 				as++;
 			} else if (0 == strncmp("subnet=", arg, 7)) {
+				ep->subnet = strtol(arg + 7, NULL, 0);
 				subnet++;
 			} else if (0 == strncmp("router=", arg, 7)) {
-				router++;
+				peer = calloc(1, sizeof(*peer));
+				if (!peer) {
+					ret = ENOMEM;
+					goto out;
+				}
+				peer->uri = strdup(arg + 7);
+				if (!peer->uri) {
+					ret = ENOMEM;
+					goto out;
+				}
+				ep->peers[router++] = peer;
 			}
 		}
 
@@ -239,43 +324,25 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 			goto out;
 		}
 
-	}
+		if (router < CCIR_MAX_PEERS) {
+			void *tmp = realloc(ep->peers, (router + 1)*sizeof(*peer));
 
-	cnt = i;
-
-	/* NULL terminated array */
-	es = calloc(cnt + 1, sizeof(*es));
-	if (!es) {
-		fprintf(stderr, "Failed to alloc endpoints\n");
-		ret = ENOMEM;
-		goto out;
-	}
-
-	for (i = 0; ; i++) {
-		if (devs[i]) {
-			ret = cci_create_endpoint(devs[i], 0, &es[i], NULL);
-			if (ret) {
-				fprintf(stderr, "Unable to create endpoint "
-						"on device %s (%s)\n",
-						devs[i]->name,
-						cci_strerror(NULL, ret));
-				for (i = i - 1; i >= 0; i--) {
-					int ret2 = 0;
-
-					ret2 = cci_destroy_endpoint(es[i]);
-					if (ret2) {
-						fprintf(stderr, "Unable to destroy "
-								"endpoint %d (%s)\n",
-								i,
-								cci_strerror(NULL, ret2));
-					}
-				}
-				free(es);
-				goto out;
+			if (tmp) {
+				ep->peers = tmp;
+				ep->peers[router] = NULL;
 			}
-		} else {
-			break;
+			ep->peer_cnt = router;
 		}
+
+		ret = cci_create_endpoint(d, 0, &(ep->e), NULL);
+		if (ret) {
+			fprintf(stderr, "Unable to create endpoint "
+					"on device %s (%s)\n",
+					devs[i]->name,
+					cci_strerror(NULL, ret));
+			goto out;
+		}
+		*((void**)&(ep->e->context)) = (void*)ep;
 	}
 
 	if (cnt < 2)
@@ -285,16 +352,19 @@ open_endpoints(cci_endpoint_t ***eps, int *count)
 	*eps = es;
 	*count = cnt;
 out:
+	if (ret)
+		close_endpoints(es, cnt);
+
 	return ret;
 }
 
 int
 main(int argc, char *argv[])
 {
-	int ret = 0, c, count = 0, i;
+	int ret = 0, c, count = 0;
 	char *config_file = NULL;
 	uint32_t caps = 0;
-	cci_endpoint_t **eps = NULL;
+	ccir_ep_t **eps = NULL;
 
 	while ((c = getopt(argc, argv, "f:v")) != -1) {
 		switch (c) {
@@ -333,8 +403,7 @@ main(int argc, char *argv[])
 	/* We have the endpoints, start discovery and routing */
 	start_routing(eps, count);
 
-	for (i = 0; i < count; i++)
-		cci_destroy_endpoint(eps[i]);
+	close_endpoints(eps, count);
 
 out_w_init:
 	ret = cci_finalize();
