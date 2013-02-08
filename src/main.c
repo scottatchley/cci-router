@@ -40,7 +40,7 @@ static void handle_sigterm(int signum)
 	return;
 }
 
-static int install_handlers(ccir_globals_t *globals)
+static int install_sig_handlers(ccir_globals_t *globals)
 {
 	int ret = 0;
 	struct sigaction sa;
@@ -103,18 +103,48 @@ connect_peers(ccir_globals_t *globals)
 				fprintf(stderr, "%s: ep %s to peer %s\n",
 					__func__, ep->uri, peer->uri);
 			peer->state = CCIR_PEER_ACTIVE;
+			peer->attempts++;
 			ret = cci_connect(ep->e, peer->uri, NULL, 0,
 					CCI_CONN_ATTR_RO, peer, 0, &t);
 			if (ret) {
 				peer->state = CCIR_PEER_INIT;
+				/* Set the next attempt to now + 2^N
+				 * where N is the number of attempts.
+				 * This provides an exponential backoff.
+				 */
 				peer->next_attempt = now.tv_sec +
-					(++peer->attempts * CCIR_CONNECT_BACKOFF);
+					(1 << peer->attempts);
 			}
 		}
 	}
 
 out:
 	return ret;
+}
+
+static void
+handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	switch (event->type) {
+	case CCI_EVENT_SEND:
+		break;
+	case CCI_EVENT_RECV:
+		break;
+	case CCI_EVENT_CONNECT_REQUEST:
+		break;
+	case CCI_EVENT_ACCEPT:
+		break;
+	case CCI_EVENT_CONNECT:
+		break;
+	case CCI_EVENT_KEEPALIVE_TIMEDOUT:
+		break;
+	case CCI_EVENT_ENDPOINT_DEVICE_FAILED:
+		break;
+	case CCI_EVENT_NONE:
+		break;
+	}
+
+	return;
 }
 
 static int
@@ -168,7 +198,12 @@ get_event(ccir_globals_t *globals)
 			}
 			found++;
 
-			/* TODO handle event */
+			handle_event(globals, ep, event);
+
+			ret = cci_return_event(event);
+			if (ret && globals->verbose)
+				fprintf(stderr, "%s: cci_return_event() failed with %s\n",
+						__func__, cci_strerror(ep->e, ret));
 		}
 	} while (found);
 
@@ -177,19 +212,19 @@ out:
 }
 
 static void
-start_routing(ccir_globals_t *globals)
+event_loop(ccir_globals_t *globals)
 {
 	int ret = 0;
 
 	running = 1;
 
-	ret = install_handlers(globals);
+	ret = install_sig_handlers(globals);
 	if (ret)
 		goto out;
 
 	while (running) {
-		ret = connect_peers(globals);
-		ret = get_event(globals);
+		connect_peers(globals);
+		get_event(globals);
 	}
 
 	if (globals->verbose)
@@ -598,7 +633,7 @@ main(int argc, char *argv[])
 	}
 
 	/* We have the endpoints, start discovery and routing */
-	start_routing(globals);
+	event_loop(globals);
 
 	close_endpoints(globals);
 

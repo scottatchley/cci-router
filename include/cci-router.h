@@ -11,7 +11,6 @@
 
 #define CCIR_MAX_PEERS	(128)	/* Maximum peer routers per subnet */
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
-#define CCIR_CONNECT_BACKOFF	(2)	/* Multiplier */
 #define CCIR_BLOCKING_TIMEOUT	(1)	/* Seconds */
 
 typedef enum ccir_peer_state {
