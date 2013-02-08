@@ -17,11 +17,9 @@
 #include <libgen.h>
 #include <sys/param.h>
 #include <signal.h>
+#include <sys/select.h>
 
 #include "cci-router.h"
-
-int running = 0;
-
 
 static void
 usage(char *procname)
@@ -33,6 +31,8 @@ usage(char *procname)
 	fprintf(stderr, "\t-b\tBlocking mode instead of polling mode\n");
 	exit(EXIT_FAILURE);
 }
+
+volatile int running = 0;
 
 static void handle_sigterm(int signum)
 {
@@ -74,11 +74,105 @@ out:
 }
 
 static int
+connect_peers(ccir_globals_t *globals)
+{
+	int ret = 0, i = 0;
+	struct timeval t = { CCIR_CONNECT_TIMEOUT, 0 }, now = { 0, 0 };
+
+	ret = gettimeofday(&now, NULL);
+	if (ret) {
+		ret = errno;
+		goto out;
+	}
+
+	for (i = 0; i < globals->ep_cnt; i++) {
+		ccir_ep_t *ep = globals->eps[i];
+		ccir_peer_t **p = NULL;
+
+		if (!ep->need_connect)
+			continue;
+
+		for (p = ep->peers; *p; p++) {
+			ccir_peer_t *peer = *p;
+
+			if (peer->state != CCIR_PEER_INIT ||
+				peer->next_attempt > now.tv_sec)
+				continue;
+
+			if (globals->verbose)
+				fprintf(stderr, "%s: ep %s to peer %s\n",
+					__func__, ep->uri, peer->uri);
+			peer->state = CCIR_PEER_ACTIVE;
+			ret = cci_connect(ep->e, peer->uri, NULL, 0,
+					CCI_CONN_ATTR_RO, peer, 0, &t);
+			if (ret) {
+				peer->state = CCIR_PEER_INIT;
+				peer->next_attempt = now.tv_sec +
+					(++peer->attempts * CCIR_CONNECT_BACKOFF);
+			}
+		}
+	}
+
+out:
+	return ret;
+}
+
+static int
 get_event(ccir_globals_t *globals)
 {
-	int ret = 0;
+	int ret = 0, i = 0, found = 0;
+	ccir_ep_t **eps = globals->eps;
+	ccir_ep_t *ep = NULL;
+	struct timeval ts = { CCIR_BLOCKING_TIMEOUT, 0 };
 
+	if (globals->blocking) {
+		fd_set fds;
+		FD_ZERO(&fds);
 
+		for (i = 0; i < globals->ep_cnt; i++) {
+			ep = eps[i];
+			FD_SET(ep->fd, &fds);
+		}
+
+		do {
+			ret = select(globals->nfds, &fds, NULL, NULL, &ts);
+			if (ret == 1 && errno == EINTR)
+				ret = 0;
+		} while (!ret && running);
+	}
+
+	do {
+		found = 0;
+
+		for (i = 0; i < globals->ep_cnt; i++) {
+			cci_event_t *event = NULL;
+
+			ep = eps[i];
+			ret = cci_get_event(ep->e, &event);
+			if (ret) {
+				if (ret == CCI_EAGAIN) {
+					continue;
+				} else if (ret == CCI_ENOBUFS) {
+					if (globals->verbose) {
+						fprintf(stderr, "%s: Need to return "
+								"recv events for CCI "
+								"endpoint %s\n",
+								__func__,
+								ep->uri);
+					}
+					continue;
+				} else {
+					/* TODO */
+					goto out;
+				}
+			}
+			found++;
+
+			/* TODO handle event */
+		}
+	} while (found);
+
+out:
 	return ret;
 }
 
@@ -94,7 +188,8 @@ start_routing(ccir_globals_t *globals)
 		goto out;
 
 	while (running) {
-		get_event(globals);
+		ret = connect_peers(globals);
+		ret = get_event(globals);
 	}
 
 	if (globals->verbose)
@@ -268,7 +363,7 @@ close_endpoints(ccir_globals_t *globals)
 	if (!globals->eps)
 		return;
 
-	for (i = 0; i < globals->count; i++) {
+	for (i = 0; i < globals->ep_cnt; i++) {
 		ccir_ep_t *ep = globals->eps[i];
 
 		if (!ep)
@@ -405,7 +500,7 @@ open_endpoints(ccir_globals_t *globals)
 				ep->peers = tmp;
 				ep->peers[router] = NULL;
 			}
-			ep->peer_cnt = router;
+			ep->peer_cnt = ep->need_connect = router;
 		}
 
 		if (globals->blocking)
@@ -420,6 +515,22 @@ open_endpoints(ccir_globals_t *globals)
 			goto out;
 		}
 		*((void**)&(ep->e->context)) = (void*)ep;
+
+		if (globals->blocking) {
+			if (*fd >= globals->nfds)
+				globals->nfds = *fd + 1;
+		}
+
+		ret = cci_get_opt((cci_opt_handle_t *)ep->e, CCI_OPT_ENDPT_URI, &ep->uri);
+		if (ret) {
+			fprintf(stderr, "%s: cci_get_opt() returned %s\n",
+					__func__, cci_strerror(ep->e, ret));
+			goto out;
+		}
+
+		if (globals->verbose > 2)
+			fprintf(stdout, "%s: opened %s on device %s\n", __func__,
+					ep->uri, d->name);
 	}
 
 	if (cnt < 2)
@@ -427,7 +538,7 @@ open_endpoints(ccir_globals_t *globals)
 				cnt, cnt == 0 ? "s" : "");
 
 	globals->eps = es;
-	globals->count = cnt;
+	globals->ep_cnt = cnt;
 out:
 	if (ret)
 		close_endpoints(globals);
