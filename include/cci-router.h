@@ -39,6 +39,7 @@ typedef struct ccir_ep {
 	uint32_t as;		/* Our autonomous system ID */
 	uint32_t subnet;	/* Our subnet ID */
 	uint32_t need_connect;	/* Do we need to attempt a peer connect? */
+	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
 } ccir_ep_t;
 
 typedef struct ccir_globals {
@@ -47,4 +48,5 @@ typedef struct ccir_globals {
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
 	uint32_t verbose;	/* Level of debugging output */
+	uint32_t shutdown;
 } ccir_globals_t;

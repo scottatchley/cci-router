@@ -34,7 +34,7 @@ usage(char *procname)
 
 volatile int running = 0;
 
-static void handle_sigterm(int signum)
+static void handle_sigs(int signum)
 {
 	running = 0;
 	return;
@@ -45,7 +45,7 @@ static int install_sig_handlers(ccir_globals_t *globals)
 	int ret = 0;
 	struct sigaction sa;
 
-	sa.sa_handler = handle_sigterm;
+	sa.sa_handler = handle_sigs;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 
@@ -122,9 +122,54 @@ out:
 	return ret;
 }
 
+/* Handle a connect completion event.
+ *
+ * Need to determine if the event if for router-to-router use or
+ * for a client.
+ */
 static void
+handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	uint32_t peer_connect = (uint32_t) ((uintptr_t)event->connect.context & (uintptr_t)0x1);
+	void *ctx = (void *)((uintptr_t)event->connect.context & ~((uintptr_t)0x1));
+
+	if (peer_connect) {
+		ccir_peer_t *peer = ctx;
+
+		if (event->connect.status == CCI_SUCCESS) {
+			peer->c = event->connect.connection;
+		} else {
+			struct timeval now = { 0, 0 };
+
+			gettimeofday(&now, NULL);
+			peer->state = CCIR_PEER_INIT;
+			/* Set the next attempt to now + 2^N
+			 * where N is the number of attempts.
+			 * This provides an exponential backoff.
+			 */
+			peer->next_attempt = now.tv_sec + (1 << peer->attempts);
+
+			if (event->connect.status == CCI_ECONNREFUSED) {
+				fprintf(stderr, "%s: peer %s refused a connection "
+						"from endpoint %s\n", __func__,
+						peer->uri, ep->uri);
+			}
+		}
+	} else {
+		/* Connect completed for routed connection. Wait for end-to-end
+		 * ACK or FAIL.
+		 */
+		/* TODO */
+	}
+
+	return;
+}
+
+static int
 handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
+	int ret = 0, i = 0, up = 0;
+
 	switch (event->type) {
 	case CCI_EVENT_SEND:
 		break;
@@ -135,16 +180,38 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	case CCI_EVENT_ACCEPT:
 		break;
 	case CCI_EVENT_CONNECT:
+		handle_connect(globals, ep, event);
 		break;
 	case CCI_EVENT_KEEPALIVE_TIMEDOUT:
 		break;
 	case CCI_EVENT_ENDPOINT_DEVICE_FAILED:
+		/* We cannot recover - stop using this endpoint */
+		ret = CCI_ERROR;
+		ep->failed = 1;
+
+		fprintf(stderr, "%s: endpoint %s on device %s returned "
+				"device failed event.\nUnable to continue "
+				"routing using this endpoint.\n", __func__,
+				ep->uri, ep->e->device->name);
+
+		/* Try to keep routing if >=2 endpoints are still up */
+		for (i = 0; i < globals->ep_cnt; i++) {
+			ccir_ep_t *e = globals->eps[i];
+			if (!e->failed)
+				up++;
+		}
+		if (up < 2) {
+			globals->shutdown = 1;
+			fprintf(stderr, "%s: Unable to route with %d endpoint%s up.\n"
+					"Shutting down.\n", __func__,
+					up, up == 0 ? "s" : "");
+		}
 		break;
 	case CCI_EVENT_NONE:
 		break;
 	}
 
-	return;
+	return ret;
 }
 
 static int
@@ -161,7 +228,8 @@ get_event(ccir_globals_t *globals)
 
 		for (i = 0; i < globals->ep_cnt; i++) {
 			ep = eps[i];
-			FD_SET(ep->fd, &fds);
+			if (!ep->failed)
+				FD_SET(ep->fd, &fds);
 		}
 
 		do {
@@ -178,6 +246,10 @@ get_event(ccir_globals_t *globals)
 			cci_event_t *event = NULL;
 
 			ep = eps[i];
+
+			if (ep->failed)
+				continue;
+
 			ret = cci_get_event(ep->e, &event);
 			if (ret) {
 				if (ret == CCI_EAGAIN) {
@@ -198,15 +270,14 @@ get_event(ccir_globals_t *globals)
 			}
 			found++;
 
-			handle_event(globals, ep, event);
+			ret = handle_event(globals, ep, event);
 
 			ret = cci_return_event(event);
 			if (ret && globals->verbose)
 				fprintf(stderr, "%s: cci_return_event() failed with %s\n",
 						__func__, cci_strerror(ep->e, ret));
 		}
-	} while (found);
-
+	} while (found && !globals->shutdown);
 out:
 	return ret;
 }
