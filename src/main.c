@@ -102,10 +102,15 @@ connect_peers(ccir_globals_t *globals)
 			if (globals->verbose)
 				fprintf(stderr, "%s: ep %s to peer %s\n",
 					__func__, ep->uri, peer->uri);
+
 			peer->state = CCIR_PEER_ACTIVE;
 			peer->attempts++;
-			ret = cci_connect(ep->e, peer->uri, NULL, 0,
-					CCI_CONN_ATTR_RO, peer, 0, &t);
+			ret = cci_connect(ep->e, peer->uri,
+					ep->uri,
+					strlen(ep->uri),
+					CCI_CONN_ATTR_RO,
+					CCIR_SET_PEER_CTX(peer),
+					0, &t);
 			if (ret) {
 				peer->state = CCIR_PEER_INIT;
 				/* Set the next attempt to now + 2^N
@@ -122,7 +127,104 @@ out:
 	return ret;
 }
 
-/* Handle a connect completion event.
+/* Handle a connection request event.
+ *
+ * Need to determine if the event if for router-to-router use or
+ * for a client.
+ *
+ * CCI connect_request event includes:
+ *     type
+ *     data_len
+ *     data_ptr
+ *     attribute
+ */
+static void
+handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0, i = 0;
+	const void *ptr = event->request.data_ptr;
+	uint32_t data_len = event->request.data_len;
+	char uri[256];
+
+	if (event->request.attribute != CCI_CONN_ATTR_RO) {
+		fprintf(stderr, "%s: received request with connection "
+				"attribute %d\n", __func__,
+				event->request.attribute);
+		goto out;
+	}
+
+	memset(uri, 0, 256);
+	memcpy(uri, ptr, data_len);
+
+	if (globals->verbose)
+		fprintf(stderr, "%s: received connection request "
+				"from %s\n", __func__, uri);
+
+	/* Find matching peer */
+	for (i = 0; i < ep->peer_cnt; i++) {
+		ccir_peer_t *peer = ep->peers[i];
+
+		if (!strcmp(uri, peer->uri)) {
+			if (peer->state == CCIR_PEER_ACTIVE) {
+				fprintf(stderr, "%s: connection race detected with "
+						"%s\n", __func__, peer->uri);
+				/* Accept and we will sort it out later */
+			}
+
+			/* Accept the connection request */
+			ret = cci_accept(event, CCIR_SET_PEER_CTX(peer));
+			if (ret) {
+				fprintf(stderr, "%s: cci_accept() failed %s\n",
+						__func__, cci_strerror(ep->e, ret));
+			}
+		}
+	}
+out:
+	return;
+}
+
+/* Handle an accept event.
+ *
+ * Need to determine if the event if for router-to-router use or
+ * for a client.
+ *
+ * CCI connect_request event includes:
+ *     type
+ *     status
+ *     context
+ *     connection
+ */
+static void
+handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	uint32_t peer_accept = CCIR_IS_PEER_CTX(event->accept.context);
+	void *ctx = CCIR_CTX(event->accept.context);
+
+	if (peer_accept) {
+		ccir_peer_t *peer = ctx;
+
+		if (event->accept.status == CCI_SUCCESS) {
+			if (peer->state == CCIR_PEER_PASSIVE) {
+				peer->c = event->accept.connection;
+				peer->state = CCIR_PEER_CONNECTED;
+			} else {
+				peer->p = event->accept.connection;
+			}
+
+			if (globals->verbose)
+				fprintf(stderr, "%s: accepted %s on endpoint %s (%s) "
+						"(c=%p p=%p)\n",
+						__func__, peer->uri, ep->uri,
+						ccir_peer_state_str(peer->state),
+						peer->c, peer->p);
+			/* TODO add to known peers, exchange routing table */
+		}
+	}
+
+	return;
+}
+
+/* Handle a accept completion event.
  *
  * Need to determine if the event if for router-to-router use or
  * for a client.
@@ -130,14 +232,24 @@ out:
 static void
 handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	uint32_t peer_connect = (uint32_t) ((uintptr_t)event->connect.context & (uintptr_t)0x1);
-	void *ctx = (void *)((uintptr_t)event->connect.context & ~((uintptr_t)0x1));
+	uint32_t peer_connect = CCIR_IS_PEER_CTX(event->connect.context);
+	void *ctx = CCIR_CTX(event->connect.context);
 
 	if (peer_connect) {
 		ccir_peer_t *peer = ctx;
 
 		if (event->connect.status == CCI_SUCCESS) {
 			peer->c = event->connect.connection;
+			if (peer->state == CCIR_PEER_ACTIVE)
+				peer->state = CCIR_PEER_CONNECTED;
+
+			if (globals->verbose)
+				fprintf(stderr, "%s: connected to %s on endpoint %s (%s) "
+						"(c=%p p=%p)\n",
+						__func__, peer->uri, ep->uri,
+						ccir_peer_state_str(peer->state),
+						peer->c, peer->p);
+			/* TODO add to known peers, exchange routing table */
 		} else {
 			struct timeval now = { 0, 0 };
 
@@ -157,9 +269,9 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		}
 	} else {
 		/* Connect completed for routed connection. Wait for end-to-end
-		 * ACK or FAIL.
+		 * ACCEPT or REJECT.
 		 */
-		/* TODO */
+		/* TODO add connection to routed connection struct */
 	}
 
 	return;
@@ -176,8 +288,10 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	case CCI_EVENT_RECV:
 		break;
 	case CCI_EVENT_CONNECT_REQUEST:
+		handle_connect_request(globals, ep, event);
 		break;
 	case CCI_EVENT_ACCEPT:
+		handle_accept(globals, ep, event);
 		break;
 	case CCI_EVENT_CONNECT:
 		handle_connect(globals, ep, event);
@@ -299,7 +413,7 @@ event_loop(ccir_globals_t *globals)
 	}
 
 	if (globals->verbose)
-		fprintf(stdout, "Exiting %s\n", __func__);
+		fprintf(stderr, "Exiting %s\n", __func__);
 out:
 	return;
 }
@@ -464,7 +578,7 @@ close_endpoints(ccir_globals_t *globals)
 	int i = 0;
 
 	if (globals->verbose)
-		fprintf(stdout, "Entering %s\n", __func__);
+		fprintf(stderr, "Entering %s\n", __func__);
 
 	if (!globals->eps)
 		return;
@@ -503,7 +617,7 @@ close_endpoints(ccir_globals_t *globals)
 	free(globals->eps);
 
 	if (globals->verbose)
-		fprintf(stdout, "Leaving %s\n", __func__);
+		fprintf(stderr, "Leaving %s\n", __func__);
 
 	return;
 }
@@ -635,7 +749,7 @@ open_endpoints(ccir_globals_t *globals)
 		}
 
 		if (globals->verbose > 2)
-			fprintf(stdout, "%s: opened %s on device %s\n", __func__,
+			fprintf(stderr, "%s: opened %s on device %s\n", __func__,
 					ep->uri, d->name);
 	}
 
@@ -716,7 +830,7 @@ out_w_init:
 	}
 
 	if (globals->verbose)
-		fprintf(stdout, "%s is done\n", argv[0]);
+		fprintf(stderr, "%s is done\n", argv[0]);
 
 out:
 	return ret;

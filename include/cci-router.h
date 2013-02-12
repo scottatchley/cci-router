@@ -13,6 +13,15 @@
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
 #define CCIR_BLOCKING_TIMEOUT	(1)	/* Seconds */
 
+#define CCIR_SET_PEER_CTX(ctx)	\
+	((void *)((uintptr_t)(ctx) | (uintptr_t)0x1))
+
+#define CCIR_IS_PEER_CTX(ctx)	\
+	(((uintptr_t)(ctx) & (uintptr_t)0x1))
+
+#define CCIR_CTX(ctx)	\
+	((void*)((uintptr_t)(ctx) & ~((uintptr_t)0x1)))
+
 typedef enum ccir_peer_state {
 	CCIR_PEER_CLOSED = -2,	/* Connection invalid */
 	CCIR_PEER_CLOSING = -1,	/* Sent bye, waiting on ack */
@@ -22,8 +31,30 @@ typedef enum ccir_peer_state {
 	CCIR_PEER_CONNECTED	/* Ready to exchange route info */
 } ccir_peer_state_t;
 
+static inline const char *
+ccir_peer_state_str(ccir_peer_state_t state)
+{
+	switch (state) {
+	case CCIR_PEER_CLOSED:
+		return "CCIR_PEER_CLOSED";
+	case CCIR_PEER_CLOSING:
+		return "CCIR_PEER_CLOSING";
+	case CCIR_PEER_INIT:
+		return "CCIR_PEER_INIT";
+	case CCIR_PEER_ACTIVE:
+		return "CCIR_PEER_ACTIVE";
+	case CCIR_PEER_PASSIVE:
+		return "CCIR_PEER_PASSIVE";
+	case CCIR_PEER_CONNECTED:
+		return "CCIR_PEER_CONNECTED";
+	}
+	/* never reaches here */
+	return NULL;
+}
+
 typedef struct ccir_peer {
 	cci_connection_t *c;	/* CCI connection */
+	cci_connection_t *p;	/* Incoming CCI connection */
 	char *uri;		/* Peer's CCI URI */
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
@@ -50,3 +81,20 @@ typedef struct ccir_globals {
 	uint32_t verbose;	/* Level of debugging output */
 	uint32_t shutdown;
 } ccir_globals_t;
+
+typedef enum ccir_rconn_state {
+	CCIR_RCONN_CLOSED = -2,	/* Closed ready for cleanup */
+	CCIR_RCONN_CLOSING = -1, /* Closing */
+	CCIR_RCONN_INIT = 0,	/* Initial state */
+	CCIR_RCONN_ACTIVE,	/* Sent dst connect request, waiting on completion */
+	CCIR_RCONN_PASSIVE,	/* Received src conn request, waiting on completion */
+	CCIR_RCONN_PENDING,	/* Wainting on E2E ACCEPT or REJECT */
+	CCIR_RCONN_CONNECTED	/* Forwarding enabled */
+} ccir_rconn_state_t;
+
+/* Routed connection */
+typedef struct ccir_rconn {
+	cci_connection_t *src;
+	cci_connection_t *dst;
+	ccir_rconn_state_t state;
+} ccir_rconn_t;
