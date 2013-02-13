@@ -59,6 +59,7 @@ typedef struct ccir_peer {
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
 	uint32_t attempts;	/* Number of connection attempts */
+	uint32_t cookie;	/* Random value for connection tie-breakers */
 } ccir_peer_t;
 
 typedef struct ccir_ep {

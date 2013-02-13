@@ -76,7 +76,8 @@ out:
 static int
 connect_peers(ccir_globals_t *globals)
 {
-	int ret = 0, i = 0;
+	int ret = 0;
+	uint32_t i = 0;
 	struct timeval t = { CCIR_CONNECT_TIMEOUT, 0 }, now = { 0, 0 };
 
 	ret = gettimeofday(&now, NULL);
@@ -141,7 +142,8 @@ out:
 static void
 handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int ret = 0, i = 0;
+	int ret = 0;
+	uint32_t i = 0;
 	const void *ptr = event->request.data_ptr;
 	uint32_t data_len = event->request.data_len;
 	char uri[256];
@@ -216,7 +218,7 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						"(c=%p p=%p)\n",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
-						peer->c, peer->p);
+						(void*)peer->c, (void*)peer->p);
 			/* TODO add to known peers, exchange routing table */
 		}
 	}
@@ -248,7 +250,7 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						"(c=%p p=%p)\n",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
-						peer->c, peer->p);
+						(void*)peer->c, (void*)peer->p);
 			/* TODO add to known peers, exchange routing table */
 		} else {
 			struct timeval now = { 0, 0 };
@@ -280,7 +282,8 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static int
 handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int ret = 0, i = 0, up = 0;
+	int ret = 0, up = 0;
+	uint32_t i = 0;
 
 	switch (event->type) {
 	case CCI_EVENT_SEND:
@@ -331,7 +334,8 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static int
 get_event(ccir_globals_t *globals)
 {
-	int ret = 0, i = 0, found = 0;
+	int ret = 0, found = 0;
+	uint32_t i = 0;
 	ccir_ep_t **eps = globals->eps;
 	ccir_ep_t *ep = NULL;
 	struct timeval ts = { CCIR_BLOCKING_TIMEOUT, 0 };
@@ -575,7 +579,7 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 static void
 close_endpoints(ccir_globals_t *globals)
 {
-	int i = 0;
+	uint32_t i = 0;
 
 	if (globals->verbose)
 		fprintf(stderr, "Entering %s\n", __func__);
@@ -601,7 +605,7 @@ close_endpoints(ccir_globals_t *globals)
 		}
 
 		if (ep->peers) {
-			int j = 0;
+			uint32_t j = 0;
 
 			for (j = 0; j < ep->peer_cnt; j++) {
 				ccir_peer_t *p = ep->peers[j];
@@ -649,6 +653,8 @@ open_endpoints(ccir_globals_t *globals)
 		ret = ENOMEM;
 		goto out;
 	}
+
+	srandomdev();
 
 	/* Make sure that the devices have specified
 	 * as, subnet, and at least one router */
@@ -698,6 +704,7 @@ open_endpoints(ccir_globals_t *globals)
 					goto out;
 				}
 				ep->peers[router++] = peer;
+				peer->cookie = (uint32_t) random();
 			}
 		}
 
@@ -737,7 +744,7 @@ open_endpoints(ccir_globals_t *globals)
 		*((void**)&(ep->e->context)) = (void*)ep;
 
 		if (globals->blocking) {
-			if (*fd >= globals->nfds)
+			if (*fd >= (int) globals->nfds)
 				globals->nfds = *fd + 1;
 		}
 
