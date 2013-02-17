@@ -7,8 +7,13 @@
  *
  */
 
+#ifndef CCI_ROUTER_H
+#define CCI_ROUTER_H
+
 #include "cci.h"
 #include "cci_router_wire.h"
+
+BEGIN_C_DECLS
 
 #define CCIR_MAX_PEERS	(128)	/* Maximum peer routers per subnet */
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
@@ -99,3 +104,24 @@ typedef struct ccir_rconn {
 	cci_connection_t *dst;
 	ccir_rconn_state_t state;
 } ccir_rconn_t;
+
+#define CCIR_DEBUG	(1)	/* Turn on for development */
+
+#define RDB_EP		(1 << 0)	/* endpoint */
+#define RDB_PEER	(1 << 1)	/* peer/connections */
+#define RDB_INFO	(1 << 2)	/* non-specific, low value */
+
+#define RDB_ALL		(~0)		/* print all */
+
+#if CCIR_DEBUG
+#define debug(lvl,fmt,args...)					\
+do {								\
+	if ((lvl) & globals->debug)				\
+		fprintf(stderr, "router: " fmt "\n", ##args);	\
+} while(0)
+#else	/* !CCIR_DEBUG */
+#define debug(lvl,fmt,args...) do { } while(0)
+#endif	/* CCIR_DEBUG */
+
+END_C_DECLS
+#endif /* CCI_ROUTER_H */
