@@ -60,7 +60,6 @@ typedef struct ccir_peer {
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
 	uint32_t attempts;	/* Number of connection attempts */
-	uint32_t cookie;	/* Random value for connection tie-breakers */
 } ccir_peer_t;
 
 typedef struct ccir_ep {
@@ -73,7 +72,6 @@ typedef struct ccir_ep {
 	uint32_t subnet;	/* Our subnet ID */
 	uint32_t need_connect;	/* Do we need to attempt a peer connect? */
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
-	uint32_t cookie;	/* Random value for connection tie-breakers */
 } ccir_ep_t;
 
 typedef struct ccir_globals {

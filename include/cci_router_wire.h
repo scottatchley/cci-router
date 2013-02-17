@@ -22,8 +22,6 @@ typedef union ccir_peer_hdr {
 		uint8_t len;		/* Sender's URI length */
 		uint8_t pad;
 		/* 32b */
-		uint32_t cookie;	/* Sender's cookie */
-		/* 64b */
 	} _connect;
 
 	/* Connect request */
@@ -33,8 +31,6 @@ typedef union ccir_peer_hdr {
 		uint8_t len;		/* Sender's URI length */
 		uint8_t pad;
 		/* 32b */
-		uint32_t cookie;	/* Sender's cookie */
-		/* 64b */
 		char data[1];		/* Start of sender's URI */
 	} connect;
 

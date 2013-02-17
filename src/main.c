@@ -114,7 +114,6 @@ connect_peers(ccir_globals_t *globals)
 			hdr->connect.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_CONNECT);
 			hdr->connect.version = 1;
 			hdr->connect.len = len;
-			hdr->connect.cookie = ep->cookie;
 			memcpy(hdr->connect.data, ep->uri, hdr->connect.len);
 
 			len += sizeof(hdr->_connect);
@@ -143,7 +142,7 @@ out:
 static void
 handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int ret = 0;
+	int ret = 0, found = 0;
 	uint32_t i = 0;
 	char uri[256];
 	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
@@ -167,21 +166,25 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 		ccir_peer_t *peer = ep->peers[i];
 
 		if (!strcmp(uri, peer->uri)) {
+			int accept = strcmp(peer->uri, ep->uri);
+			if (accept == 0) {
+				fprintf(stderr, "%s: skipping connect request from "
+						"this endpoint (%s)?", __func__,
+						ep->uri);
+				continue;
+			}
+
+			accept = accept < 0;
+
+			found++;
+
 			if (peer->state == CCIR_PEER_ACTIVE) {
 				fprintf(stderr, "%s: connection race detected with "
 						"%s\n", __func__, peer->uri);
 				/* Accept and we will sort it out later */
 			}
-			if (peer->cookie && (peer->cookie != hdr->connect.cookie)) {
-				fprintf(stderr, "%s: replacing peer %s's ccokie "
-						"0x%x with 0x%x\n", __func__,
-						peer->uri, peer->cookie,
-						hdr->connect.cookie);
-			}
-			peer->cookie = hdr->connect.cookie;
 
-			if (peer->cookie < ep->cookie) {
-accept:
+			if (accept) {
 				/* Accept the connection request */
 				if (globals->verbose) {
 					fprintf(stderr, "%s: accepting passive conn "
@@ -193,8 +196,7 @@ accept:
 					fprintf(stderr, "%s: cci_accept() failed %s\n",
 							__func__, cci_strerror(ep->e, ret));
 				}
-			} else if (peer->cookie > ep->cookie) {
-reject:
+			} else {
 				if (globals->verbose) {
 					fprintf(stderr, "%s: rejecting passive conn "
 							"from %s\n", __func__,
@@ -205,14 +207,18 @@ reject:
 					fprintf(stderr, "%s: cci_reject() failed %s\n",
 							__func__, cci_strerror(ep->e, ret));
 				}
-			} else {
-				/* The very unlikely case that they are equal... */
-				int accept = strcmp(peer->uri, ep->uri);
-				if (accept)
-					goto accept;
-				else
-					goto reject;
 			}
+		}
+	}
+
+	if (!found) {
+		fprintf(stderr, "%s: no matching endpoint for this request.\n"
+				"\tFrom ep %s for ep %s.\n", __func__,
+				uri, ep->uri);
+		ret = cci_reject(event);
+		if (ret) {
+			fprintf(stderr, "%s: cci_reject() failed %s\n",
+					__func__, cci_strerror(ep->e, ret));
 		}
 	}
 out:
@@ -794,8 +800,6 @@ open_endpoints(ccir_globals_t *globals)
 			}
 		}
 
-		ep->cookie = (uint32_t) random();
-
 		if (!as || !subnet || !router) {
 			fprintf(stderr, "Device [%s] is missing keyword/values "
 					"for as=, subnet=, and/or router=\n", d->name);
@@ -842,8 +846,6 @@ open_endpoints(ccir_globals_t *globals)
 					__func__, cci_strerror(ep->e, ret));
 			goto out;
 		}
-
-		fprintf(stderr, "ep %s has cookie 0x%x\n", ep->uri, ep->cookie);
 
 		if (globals->verbose > 2)
 			fprintf(stderr, "%s: opened %s on device %s\n", __func__,
