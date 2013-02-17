@@ -20,8 +20,8 @@ AC_DEFUN([CCIR_DEFINE_ARGS],[
           [ccir_add="-Wall -Wundef -Wsign-compare"
            ccir_add="$ccir_add -Wmissing-prototypes -Wstrict-prototypes"
            ccir_add="$ccir_add -Wcomment -pedantic"
-           ccir_add="$ccir_add -Werror-implicit-function-declaration "
-           ccir_add="$ccir_add -Wstrict-prototypes"
+           ccir_add="$ccir_add -Werror-implicit-function-declaration"
+	   cci_add="$cci_add -Wno-variadic-macros -Wno-long-long"
            CFLAGS="$CFLAGS $ccir_add"
            CCIR_UNIQ(CFLAGS)
            AC_MSG_WARN([$ccir_add has been added to CFLAGS (--enable-picky)])
