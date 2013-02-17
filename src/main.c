@@ -181,6 +181,7 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 			peer->cookie = hdr->connect.cookie;
 
 			if (peer->cookie < ep->cookie) {
+accept:
 				/* Accept the connection request */
 				if (globals->verbose) {
 					fprintf(stderr, "%s: accepting passive conn "
@@ -192,7 +193,8 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 					fprintf(stderr, "%s: cci_accept() failed %s\n",
 							__func__, cci_strerror(ep->e, ret));
 				}
-			} else {
+			} else if (peer->cookie > ep->cookie) {
+reject:
 				if (globals->verbose) {
 					fprintf(stderr, "%s: rejecting passive conn "
 							"from %s\n", __func__,
@@ -203,6 +205,13 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 					fprintf(stderr, "%s: cci_reject() failed %s\n",
 							__func__, cci_strerror(ep->e, ret));
 				}
+			} else {
+				/* The very unlikely case that they are equal... */
+				int accept = strcmp(peer->uri, ep->uri);
+				if (accept)
+					goto accept;
+				else
+					goto reject;
 			}
 		}
 	}

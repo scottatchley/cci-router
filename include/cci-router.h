@@ -54,8 +54,8 @@ ccir_peer_state_str(ccir_peer_state_t state)
 }
 
 typedef struct ccir_peer {
-	cci_connection_t *c;	/* CCI connection */
-	cci_connection_t *p;	/* Incoming CCI connection */
+	cci_connection_t *c;	/* Active CCI connection */
+	cci_connection_t *p;	/* Passive CCI connection */
 	char *uri;		/* Peer's CCI URI */
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
