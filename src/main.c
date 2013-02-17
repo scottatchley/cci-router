@@ -94,7 +94,10 @@ connect_peers(ccir_globals_t *globals)
 			continue;
 
 		for (p = ep->peers; *p; p++) {
+			char buffer[256];
 			ccir_peer_t *peer = *p;
+			ccir_peer_hdr_t *hdr = (void*)buffer;
+			uint8_t len = strlen(ep->uri);
 
 			if (peer->state != CCIR_PEER_INIT ||
 				peer->next_attempt > now.tv_sec)
@@ -106,9 +109,19 @@ connect_peers(ccir_globals_t *globals)
 
 			peer->state = CCIR_PEER_ACTIVE;
 			peer->attempts++;
+
+			hdr = (void*)buffer;
+			hdr->connect.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_CONNECT);
+			hdr->connect.version = 1;
+			hdr->connect.len = len;
+			hdr->connect.cookie = ep->cookie;
+			memcpy(hdr->connect.data, ep->uri, hdr->connect.len);
+
+			len += sizeof(hdr->_connect);
+
 			ret = cci_connect(ep->e, peer->uri,
-					ep->uri,
-					strlen(ep->uri),
+					buffer,
+					len,
 					CCI_CONN_ATTR_RO,
 					CCIR_SET_PEER_CTX(peer),
 					0, &t);
@@ -123,9 +136,78 @@ connect_peers(ccir_globals_t *globals)
 			}
 		}
 	}
-
 out:
 	return ret;
+}
+
+static void
+handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0;
+	uint32_t i = 0;
+	char uri[256];
+	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
+
+	memset(uri, 0, 256);
+	memcpy(uri, hdr->connect.data, hdr->connect.len);
+
+	if (event->request.attribute != CCI_CONN_ATTR_RO) {
+		fprintf(stderr, "%s: received request with connection "
+				"attribute %d from %s\n", __func__,
+				event->request.attribute, uri);
+		goto out;
+	}
+
+	if (globals->verbose)
+		fprintf(stderr, "%s: received connection request "
+				"from %s\n", __func__, uri);
+
+	/* Find matching peer */
+	for (i = 0; i < ep->peer_cnt; i++) {
+		ccir_peer_t *peer = ep->peers[i];
+
+		if (!strcmp(uri, peer->uri)) {
+			if (peer->state == CCIR_PEER_ACTIVE) {
+				fprintf(stderr, "%s: connection race detected with "
+						"%s\n", __func__, peer->uri);
+				/* Accept and we will sort it out later */
+			}
+			if (peer->cookie && (peer->cookie != hdr->connect.cookie)) {
+				fprintf(stderr, "%s: replacing peer %s's ccokie "
+						"0x%x with 0x%x\n", __func__,
+						peer->uri, peer->cookie,
+						hdr->connect.cookie);
+			}
+			peer->cookie = hdr->connect.cookie;
+
+			if (peer->cookie < ep->cookie) {
+				/* Accept the connection request */
+				if (globals->verbose) {
+					fprintf(stderr, "%s: accepting passive conn "
+							"from %s\n", __func__,
+							peer->uri);
+				}
+				ret = cci_accept(event, CCIR_SET_PEER_CTX(peer));
+				if (ret) {
+					fprintf(stderr, "%s: cci_accept() failed %s\n",
+							__func__, cci_strerror(ep->e, ret));
+				}
+			} else {
+				if (globals->verbose) {
+					fprintf(stderr, "%s: rejecting passive conn "
+							"from %s\n", __func__,
+							peer->uri);
+				}
+				ret = cci_reject(event);
+				if (ret) {
+					fprintf(stderr, "%s: cci_reject() failed %s\n",
+							__func__, cci_strerror(ep->e, ret));
+				}
+			}
+		}
+	}
+out:
+	return;
 }
 
 /* Handle a connection request event.
@@ -142,46 +224,14 @@ out:
 static void
 handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int ret = 0;
-	uint32_t i = 0;
-	const void *ptr = event->request.data_ptr;
-	uint32_t data_len = event->request.data_len;
-	char uri[256];
+	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
+	int is_peer = CCIR_IS_PEER_HDR(hdr->connect.type);
 
-	if (event->request.attribute != CCI_CONN_ATTR_RO) {
-		fprintf(stderr, "%s: received request with connection "
-				"attribute %d\n", __func__,
-				event->request.attribute);
-		goto out;
+	if (is_peer) {
+		handle_peer_connect_request(globals, ep, event);
+	} else {
 	}
 
-	memset(uri, 0, 256);
-	memcpy(uri, ptr, data_len);
-
-	if (globals->verbose)
-		fprintf(stderr, "%s: received connection request "
-				"from %s\n", __func__, uri);
-
-	/* Find matching peer */
-	for (i = 0; i < ep->peer_cnt; i++) {
-		ccir_peer_t *peer = ep->peers[i];
-
-		if (!strcmp(uri, peer->uri)) {
-			if (peer->state == CCIR_PEER_ACTIVE) {
-				fprintf(stderr, "%s: connection race detected with "
-						"%s\n", __func__, peer->uri);
-				/* Accept and we will sort it out later */
-			}
-
-			/* Accept the connection request */
-			ret = cci_accept(event, CCIR_SET_PEER_CTX(peer));
-			if (ret) {
-				fprintf(stderr, "%s: cci_accept() failed %s\n",
-						__func__, cci_strerror(ep->e, ret));
-			}
-		}
-	}
-out:
 	return;
 }
 
@@ -206,12 +256,10 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		ccir_peer_t *peer = ctx;
 
 		if (event->accept.status == CCI_SUCCESS) {
-			if (peer->state == CCIR_PEER_PASSIVE) {
-				peer->c = event->accept.connection;
+			if (peer->state == CCIR_PEER_PASSIVE)
 				peer->state = CCIR_PEER_CONNECTED;
-			} else {
-				peer->p = event->accept.connection;
-			}
+			peer->p = event->accept.connection;
+			ep->need_connect--;
 
 			if (globals->verbose)
 				fprintf(stderr, "%s: accepted %s on endpoint %s (%s) "
@@ -219,7 +267,11 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c, (void*)peer->p);
-			/* TODO add to known peers, exchange routing table */
+			/* TODO exchange routing table */
+		} else {
+			fprintf(stderr, "%s: accept event for %s returned %s\n",
+				__func__, peer->uri,
+				cci_strerror(ep->e, event->accept.status));
 		}
 	}
 
@@ -244,6 +296,12 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			peer->c = event->connect.connection;
 			if (peer->state == CCIR_PEER_ACTIVE)
 				peer->state = CCIR_PEER_CONNECTED;
+			else
+				fprintf(stderr, "%s: peer %s got connect event while "
+						"in state %s", __func__, peer->uri,
+						ccir_peer_state_str(peer->state));
+
+			ep->need_connect--;
 
 			if (globals->verbose)
 				fprintf(stderr, "%s: connected to %s on endpoint %s (%s) "
@@ -254,6 +312,26 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			/* TODO add to known peers, exchange routing table */
 		} else {
 			struct timeval now = { 0, 0 };
+
+			if (event->connect.status == CCI_ECONNREFUSED && peer->p) {
+				if (peer->state != CCIR_PEER_CONNECTED) {
+					fprintf(stderr, "%s: peer %s rejected "
+							"active connect and we have "
+							"passive conn %p, but "
+							"peer->state is %s.***\n",
+							__func__, peer->uri,
+							(void*)peer->p,
+							ccir_peer_state_str(peer->state));
+					/* FIXME */
+				} else {
+					/* Move peer->p to peer->c */
+					fprintf(stderr, "%s: moving peer %s's passive conn "
+							"to active conn ***\n", __func__,
+							peer->uri);
+					peer->c = peer->p;
+					peer->p = NULL;
+				}
+			}
 
 			gettimeofday(&now, NULL);
 			peer->state = CCIR_PEER_INIT;
@@ -704,9 +782,10 @@ open_endpoints(ccir_globals_t *globals)
 					goto out;
 				}
 				ep->peers[router++] = peer;
-				peer->cookie = (uint32_t) random();
 			}
 		}
+
+		ep->cookie = (uint32_t) random();
 
 		if (!as || !subnet || !router) {
 			fprintf(stderr, "Device [%s] is missing keyword/values "
@@ -754,6 +833,8 @@ open_endpoints(ccir_globals_t *globals)
 					__func__, cci_strerror(ep->e, ret));
 			goto out;
 		}
+
+		fprintf(stderr, "ep %s has cookie 0x%x\n", ep->uri, ep->cookie);
 
 		if (globals->verbose > 2)
 			fprintf(stderr, "%s: opened %s on device %s\n", __func__,
@@ -838,7 +919,6 @@ out_w_init:
 
 	if (globals->verbose)
 		fprintf(stderr, "%s is done\n", argv[0]);
-
 out:
 	return ret;
 }

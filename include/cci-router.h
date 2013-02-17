@@ -8,6 +8,7 @@
  */
 
 #include "cci.h"
+#include "cci_router_wire.h"
 
 #define CCIR_MAX_PEERS	(128)	/* Maximum peer routers per subnet */
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
@@ -72,6 +73,7 @@ typedef struct ccir_ep {
 	uint32_t subnet;	/* Our subnet ID */
 	uint32_t need_connect;	/* Do we need to attempt a peer connect? */
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
+	uint32_t cookie;	/* Random value for connection tie-breakers */
 } ccir_ep_t;
 
 typedef struct ccir_globals {
