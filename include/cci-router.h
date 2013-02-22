@@ -84,7 +84,8 @@ typedef struct ccir_globals {
 	uint32_t ep_cnt;	/* Number of endpoints */
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
-	uint32_t verbose;	/* Level of debugging output */
+	uint32_t verbose;	/* Level of verbose output */
+	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;
 } ccir_globals_t;
 
@@ -110,6 +111,7 @@ typedef struct ccir_rconn {
 #define RDB_EP		(1 << 0)	/* endpoint */
 #define RDB_PEER	(1 << 1)	/* peer/connections */
 #define RDB_INFO	(1 << 2)	/* non-specific, low value */
+#define RDB_CONFIG	(1 << 3)	/* configuration info */
 
 #define RDB_ALL		(~0)		/* print all */
 

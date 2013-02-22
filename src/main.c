@@ -68,7 +68,7 @@ static int install_sig_handlers(ccir_globals_t *globals)
 	}
 out:
 	if (ret && globals->verbose)
-		fprintf(stderr, "%s: sigaction failed with %s\n",
+		debug(RDB_INFO, "%s: sigaction failed with %s",
 				__func__, strerror(ret));
 	return ret;
 }
@@ -104,7 +104,7 @@ connect_peers(ccir_globals_t *globals)
 				continue;
 
 			if (globals->verbose)
-				fprintf(stderr, "%s: ep %s to peer %s\n",
+				debug(RDB_PEER, "%s: ep %s to peer %s",
 					__func__, ep->uri, peer->uri);
 
 			peer->state = CCIR_PEER_ACTIVE;
@@ -151,15 +151,15 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 	memcpy(uri, hdr->connect.data, hdr->connect.len);
 
 	if (event->request.attribute != CCI_CONN_ATTR_RO) {
-		fprintf(stderr, "%s: received request with connection "
-				"attribute %d from %s\n", __func__,
+		debug(RDB_INFO, "%s: received request with connection "
+				"attribute %d from %s", __func__,
 				event->request.attribute, uri);
 		goto out;
 	}
 
 	if (globals->verbose)
-		fprintf(stderr, "%s: received connection request "
-				"from %s\n", __func__, uri);
+		debug(RDB_PEER, "%s: received connection request "
+				"from %s", __func__, uri);
 
 	/* Find matching peer */
 	for (i = 0; i < ep->peer_cnt; i++) {
@@ -168,7 +168,7 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 		if (!strcmp(uri, peer->uri)) {
 			int accept = strcmp(peer->uri, ep->uri);
 			if (accept == 0) {
-				fprintf(stderr, "%s: skipping connect request from "
+				debug(RDB_PEER, "%s: skipping connect request from "
 						"this endpoint (%s)?", __func__,
 						ep->uri);
 				continue;
@@ -179,32 +179,32 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 			found++;
 
 			if (peer->state == CCIR_PEER_ACTIVE) {
-				fprintf(stderr, "%s: connection race detected with "
-						"%s\n", __func__, peer->uri);
+				debug(RDB_PEER, "%s: connection race detected with "
+						"%s", __func__, peer->uri);
 				/* Accept and we will sort it out later */
 			}
 
 			if (accept) {
 				/* Accept the connection request */
 				if (globals->verbose) {
-					fprintf(stderr, "%s: accepting passive conn "
-							"from %s\n", __func__,
+					debug(RDB_PEER, "%s: accepting passive conn "
+							"from %s", __func__,
 							peer->uri);
 				}
 				ret = cci_accept(event, CCIR_SET_PEER_CTX(peer));
 				if (ret) {
-					fprintf(stderr, "%s: cci_accept() failed %s\n",
+					debug(RDB_PEER, "%s: cci_accept() failed %s",
 							__func__, cci_strerror(ep->e, ret));
 				}
 			} else {
 				if (globals->verbose) {
-					fprintf(stderr, "%s: rejecting passive conn "
-							"from %s\n", __func__,
+					debug(RDB_PEER, "%s: rejecting passive conn "
+							"from %s", __func__,
 							peer->uri);
 				}
 				ret = cci_reject(event);
 				if (ret) {
-					fprintf(stderr, "%s: cci_reject() failed %s\n",
+					debug(RDB_PEER, "%s: cci_reject() failed %s",
 							__func__, cci_strerror(ep->e, ret));
 				}
 			}
@@ -212,12 +212,12 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 	}
 
 	if (!found) {
-		fprintf(stderr, "%s: no matching endpoint for this request.\n"
-				"\tFrom ep %s for ep %s.\n", __func__,
+		debug(RDB_PEER, "%s: no matching endpoint for this request.\n"
+				"\tFrom ep %s for ep %s.", __func__,
 				uri, ep->uri);
 		ret = cci_reject(event);
 		if (ret) {
-			fprintf(stderr, "%s: cci_reject() failed %s\n",
+			debug(RDB_PEER, "%s: cci_reject() failed %s",
 					__func__, cci_strerror(ep->e, ret));
 		}
 	}
@@ -277,16 +277,18 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			ep->need_connect--;
 
 			if (globals->verbose)
-				fprintf(stderr, "%s: accepted %s on endpoint %s (%s) "
-						"(c=%p p=%p)\n",
+				debug(RDB_PEER, "%s: accepted %s on endpoint %s (%s) "
+						"(c=%p p=%p)",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c, (void*)peer->p);
 			/* TODO exchange routing table */
 		} else {
-			fprintf(stderr, "%s: accept event for %s returned %s\n",
+			debug(RDB_PEER, "%s: accept event for %s returned %s",
 				__func__, peer->uri,
 				cci_strerror(ep->e, event->accept.status));
+			if (peer->state == CCIR_PEER_PASSIVE)
+				peer->state = CCIR_PEER_INIT;
 		}
 	}
 
@@ -312,15 +314,15 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			if (peer->state == CCIR_PEER_ACTIVE)
 				peer->state = CCIR_PEER_CONNECTED;
 			else
-				fprintf(stderr, "%s: peer %s got connect event while "
+				debug(RDB_PEER, "%s: peer %s got connect event while "
 						"in state %s", __func__, peer->uri,
 						ccir_peer_state_str(peer->state));
 
 			ep->need_connect--;
 
 			if (globals->verbose)
-				fprintf(stderr, "%s: connected to %s on endpoint %s (%s) "
-						"(c=%p p=%p)\n",
+				debug(RDB_PEER, "%s: connected to %s on endpoint %s (%s) "
+						"(c=%p p=%p)",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c, (void*)peer->p);
@@ -330,18 +332,18 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 			if (event->connect.status == CCI_ECONNREFUSED && peer->p) {
 				if (peer->state != CCIR_PEER_CONNECTED) {
-					fprintf(stderr, "%s: peer %s rejected "
+					debug(RDB_PEER, "%s: peer %s rejected "
 							"active connect and we have "
 							"passive conn %p, but "
-							"peer->state is %s.***\n",
+							"peer->state is %s.***",
 							__func__, peer->uri,
 							(void*)peer->p,
 							ccir_peer_state_str(peer->state));
 					/* FIXME */
 				} else {
 					/* Move peer->p to peer->c */
-					fprintf(stderr, "%s: moving peer %s's passive conn "
-							"to active conn ***\n", __func__,
+					debug(RDB_PEER, "%s: moving peer %s's passive conn "
+							"to active conn ***", __func__,
 							peer->uri);
 					peer->c = peer->p;
 					peer->p = NULL;
@@ -357,8 +359,8 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			peer->next_attempt = now.tv_sec + (1 << peer->attempts);
 
 			if (event->connect.status == CCI_ECONNREFUSED) {
-				fprintf(stderr, "%s: peer %s refused a connection "
-						"from endpoint %s\n", __func__,
+				debug(RDB_PEER, "%s: peer %s refused a connection "
+						"from endpoint %s", __func__,
 						peer->uri, ep->uri);
 			}
 		}
@@ -399,9 +401,9 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		ret = CCI_ERROR;
 		ep->failed = 1;
 
-		fprintf(stderr, "%s: endpoint %s on device %s returned "
+		debug(RDB_EP, "%s: endpoint %s on device %s returned "
 				"device failed event.\nUnable to continue "
-				"routing using this endpoint.\n", __func__,
+				"routing using this endpoint.", __func__,
 				ep->uri, ep->e->device->name);
 
 		/* Try to keep routing if >=2 endpoints are still up */
@@ -412,8 +414,8 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		}
 		if (up < 2) {
 			globals->shutdown = 1;
-			fprintf(stderr, "%s: Unable to route with %d endpoint%s up.\n"
-					"Shutting down.\n", __func__,
+			debug(RDB_ALL, "%s: Unable to route with %d endpoint%s up.\n"
+					"Shutting down.", __func__,
 					up, up == 0 ? "s" : "");
 		}
 		break;
@@ -467,9 +469,9 @@ get_event(ccir_globals_t *globals)
 					continue;
 				} else if (ret == CCI_ENOBUFS) {
 					if (globals->verbose) {
-						fprintf(stderr, "%s: Need to return "
+						debug(RDB_EP, "%s: Need to return "
 								"recv events for CCI "
-								"endpoint %s\n",
+								"endpoint %s",
 								__func__,
 								ep->uri);
 					}
@@ -485,7 +487,7 @@ get_event(ccir_globals_t *globals)
 
 			ret = cci_return_event(event);
 			if (ret && globals->verbose)
-				fprintf(stderr, "%s: cci_return_event() failed with %s\n",
+				debug(RDB_EP, "%s: cci_return_event() failed with %s",
 						__func__, cci_strerror(ep->e, ret));
 		}
 	} while (found && !globals->shutdown);
@@ -510,7 +512,7 @@ event_loop(ccir_globals_t *globals)
 	}
 
 	if (globals->verbose)
-		fprintf(stderr, "Exiting %s\n", __func__);
+		debug(RDB_ALL, "Exiting %s", __func__);
 out:
 	return;
 }
@@ -526,12 +528,12 @@ check_file(ccir_globals_t *globals, char *fname)
 	if (ret) {
 		ret = errno;
 		if (globals->verbose)
-			fprintf(stderr, "Cannot access config file %s due to \"%s\".\n",
+			debug(RDB_CONFIG, "Cannot access config file %s due to \"%s\".",
 				fname, strerror(ret));
 	} else if (buf.st_size == 0) {
 		ret = EINVAL;
 		if (globals->verbose)
-			fprintf(stderr, "Config file %s is empty.\n", fname);
+			debug(RDB_CONFIG, "Config file %s is empty.", fname);
 	}
 	return ret;
 }
@@ -578,14 +580,14 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 			if (cci_config) {
 				overwrite = 1;
 				if (globals->verbose)
-					fprintf(stderr, "Replacing CCI_CONFIG=%s with %s\n",
+					debug(RDB_CONFIG, "Replacing CCI_CONFIG=%s with %s",
 						cci_config, config_option);
 			}
 			ret = setenv("CCI_CONFIG", config_option, overwrite);
 			if (ret) {
 				ret = errno; /* ENOMEM */
 				if (globals->verbose)
-					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+					debug(RDB_CONFIG, "Unable to setenv(CCI_CONFIG) (%s)",
 						strerror(ret));
 			}
 		}
@@ -601,7 +603,7 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 			if (ret) {
 				ret = errno; /* ENOMEM */
 				if (globals->verbose)
-					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+					debug(RDB_CONFIG, "Unable to setenv(CCI_CONFIG) (%s)",
 						strerror(ret));
 			}
 			done = 1;
@@ -628,8 +630,8 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 					if (ret) {
 						ret = errno; /* ENOMEM */
 						if (globals->verbose)
-							fprintf(stderr, "Unable to setenv"
-								"(CCI_CONFIG) (%s)\n",
+							debug(RDB_CONFIG, "Unable to setenv"
+								"(CCI_CONFIG) (%s)",
 								strerror(ret));
 					}
 					done = 1;
@@ -648,7 +650,7 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 			if (ret) {
 				ret = errno; /* ENOMEM */
 				if (globals->verbose)
-					fprintf(stderr, "Unable to setenv(CCI_CONFIG) (%s)\n",
+					debug(RDB_CONFIG, "Unable to setenv(CCI_CONFIG) (%s)",
 						strerror(ret));
 			}
 			done = 1;
@@ -656,14 +658,14 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 	}
 
 	if (!done || ret) {
-		fprintf(stderr, "Unable to find configuration file.\n");
-		fprintf(stderr, "Precedence of config file processing:\n");
-		fprintf(stderr, "1. Command line config file option -f <file>\n");
-		fprintf(stderr, "2. CCI_CONFIG environment variable\n");
-		fprintf(stderr, "3. Local config file ($PWD/ccir_config)\n");
-		fprintf(stderr, "4. CCIR installed config file "
-				"(/$INSTALL_PATH/etc/ccir/config)\n");
-		fprintf(stderr, "5. Global config file (/etc/ccir/config)\n");
+		debug(RDB_CONFIG, "%s", "Unable to find configuration file.");
+		debug(RDB_CONFIG, "%s", "Precedence of config file processing:");
+		debug(RDB_CONFIG, "%s", "1. Command line config file option -f <file>");
+		debug(RDB_CONFIG, "%s", "2. CCI_CONFIG environment variable");
+		debug(RDB_CONFIG, "%s", "3. Local config file ($PWD/ccir_config)");
+		debug(RDB_CONFIG, "%s", "4. CCIR installed config file "
+				"(/$INSTALL_PATH/etc/ccir/config)");
+		debug(RDB_CONFIG, "%s", "5. Global config file (/etc/ccir/config)");
 	}
 
 	return ret;
@@ -675,7 +677,7 @@ close_endpoints(ccir_globals_t *globals)
 	uint32_t i = 0;
 
 	if (globals->verbose)
-		fprintf(stderr, "Entering %s\n", __func__);
+		debug(RDB_EP, "Entering %s", __func__);
 
 	if (!globals->eps)
 		return;
@@ -691,8 +693,8 @@ close_endpoints(ccir_globals_t *globals)
 
 			rc = cci_destroy_endpoint(ep->e);
 			if (rc) {
-				fprintf(stderr, "%s: cci_destroy_endpoint() "
-						"failed with %s\n",
+				debug(RDB_EP, "%s: cci_destroy_endpoint() "
+						"failed with %s",
 						__func__, cci_strerror(NULL, rc));
 			}
 		}
@@ -714,7 +716,7 @@ close_endpoints(ccir_globals_t *globals)
 	free(globals->eps);
 
 	if (globals->verbose)
-		fprintf(stderr, "Leaving %s\n", __func__);
+		debug(RDB_EP, "Leaving %s", __func__);
 
 	return;
 }
@@ -728,7 +730,7 @@ open_endpoints(ccir_globals_t *globals)
 
 	ret = cci_get_devices(&devs);
 	if (ret) {
-		fprintf(stderr, "Failed to get devices with %s\n",
+		debug(RDB_EP, "Failed to get devices with %s",
 				cci_strerror(NULL, ret));
 		goto out;
 	}
@@ -742,7 +744,7 @@ open_endpoints(ccir_globals_t *globals)
 	/* NULL terminated array */
 	es = calloc(cnt + 1, sizeof(*es));
 	if (!es) {
-		fprintf(stderr, "Failed to alloc endpoints\n");
+		debug(RDB_EP, "%s: Failed to alloc endpoints", __func__);
 		ret = ENOMEM;
 		goto out;
 	}
@@ -801,13 +803,13 @@ open_endpoints(ccir_globals_t *globals)
 		}
 
 		if (!as || !subnet || !router) {
-			fprintf(stderr, "Device [%s] is missing keyword/values "
-					"for as=, subnet=, and/or router=\n", d->name);
+			debug(RDB_EP, "Device [%s] is missing keyword/values "
+					"for as=, subnet=, and/or router=", d->name);
 			ret = EINVAL;
 			goto out;
 		} else if ((as > 1) || (subnet > 1)) {
-			fprintf(stderr, "Device [%s] has more than one keyword/value "
-					"for as= or subnet=\n", d->name);
+			debug(RDB_EP, "Device [%s] has more than one keyword/value "
+					"for as= or subnet=", d->name);
 			ret = EINVAL;
 			goto out;
 		}
@@ -827,8 +829,8 @@ open_endpoints(ccir_globals_t *globals)
 
 		ret = cci_create_endpoint(d, 0, &(ep->e), fd);
 		if (ret) {
-			fprintf(stderr, "Unable to create endpoint "
-					"on device %s (%s)\n",
+			debug(RDB_EP, "Unable to create endpoint "
+					"on device %s (%s)",
 					devs[i]->name,
 					cci_strerror(NULL, ret));
 			goto out;
@@ -842,18 +844,18 @@ open_endpoints(ccir_globals_t *globals)
 
 		ret = cci_get_opt((cci_opt_handle_t *)ep->e, CCI_OPT_ENDPT_URI, &ep->uri);
 		if (ret) {
-			fprintf(stderr, "%s: cci_get_opt() returned %s\n",
+			debug(RDB_EP, "%s: cci_get_opt() returned %s",
 					__func__, cci_strerror(ep->e, ret));
 			goto out;
 		}
 
 		if (globals->verbose > 2)
-			fprintf(stderr, "%s: opened %s on device %s\n", __func__,
+			debug(RDB_EP, "%s: opened %s on device %s", __func__,
 					ep->uri, d->name);
 	}
 
 	if (cnt < 2)
-		fprintf(stderr, "Unable to route with %d endpoint%s.\n",
+		debug(RDB_ALL, "Unable to route with %d endpoint%s.",
 				cnt, cnt == 0 ? "s" : "");
 
 	globals->eps = es;
@@ -884,7 +886,8 @@ main(int argc, char *argv[])
 		case 'f':
 			config_file = strdup(optarg);
 			if (!config_file) {
-				fprintf(stderr, "Unable to store file name - no memory\n");
+				debug(RDB_CONFIG, "%s", "Unable to store file name "
+						"- no memory");
 				exit(EXIT_FAILURE);
 			}
 			break;
@@ -899,6 +902,8 @@ main(int argc, char *argv[])
 		}
 	}
 
+	globals->debug = RDB_ALL;
+
 	ret = get_config(globals, argv[0], config_file);
 	if (ret) {
 		exit(EXIT_FAILURE);
@@ -906,13 +911,13 @@ main(int argc, char *argv[])
 
 	ret = cci_init(CCI_ABI_VERSION, 0, &caps);
 	if (ret != CCI_SUCCESS) {
-		fprintf(stderr, "Unable to init CCI\n");
+		debug(RDB_ALL, "%s", "Unable to init CCI");
 		exit(EXIT_FAILURE);
 	}
 
 	ret = open_endpoints(globals);
 	if (ret) {
-		fprintf(stderr, "Unable to open CCI endpoints.\n");
+		debug(RDB_ALL, "%s", "Unable to open CCI endpoints.");
 		goto out_w_init;
 	}
 
@@ -924,12 +929,12 @@ main(int argc, char *argv[])
 out_w_init:
 	ret = cci_finalize();
 	if (ret) {
-		fprintf(stderr, "Unable to finalize CCI\n");
+		debug(RDB_ALL, "%s", "Unable to finalize CCI");
 		exit(EXIT_FAILURE);
 	}
 
 	if (globals->verbose)
-		fprintf(stderr, "%s is done\n", argv[0]);
+		debug(RDB_ALL, "%s is done", argv[0]);
 out:
 	return ret;
 }
