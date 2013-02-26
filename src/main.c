@@ -74,6 +74,60 @@ out:
 	return ret;
 }
 
+static void
+disconnect_peers(ccir_globals_t *globals)
+{
+	int ret = 0, i = 0;
+	ccir_peer_hdr_t hdr;
+
+	memset(&hdr, 0, sizeof(hdr));
+	ccir_pack_bye(&hdr);
+
+	for (i = 0; i < (int) globals->ep_cnt; i++) {
+		int j = 0, waiting = 0;
+		ccir_ep_t *ep = globals->eps[i];
+
+		waiting = (int) ep->peer_cnt;
+
+		for (j = 0; j < waiting; j++) {
+			ccir_peer_t *peer = ep->peers[j];
+			cci_connection_t *c = peer->c ? peer->c : peer->p;
+
+			ret = cci_send(c, &hdr, sizeof(hdr.bye), CCIR_SET_PEER_CTX(peer), 0);
+			if (ret) {
+				debug(RDB_PEER, "%s: sending bye to %s failed with %s",
+					__func__, peer->uri, cci_strerror(ep->e, ret));
+				/* clean up now */
+				waiting--;
+				cci_disconnect(c);
+			}
+		}
+
+		while (waiting) {
+			cci_event_t *event = NULL;
+
+			ret = cci_get_event(ep->e, &event);
+			if (ret == CCI_SUCCESS) {
+				cci_connection_t *c = NULL;
+
+				switch (event->type) {
+				default:
+					break;
+				case CCI_EVENT_SEND:
+					c = event->send.connection;
+					if (event->send.context == c->context) {
+						waiting--;
+						cci_disconnect(c);
+					}
+					break;
+				}
+				cci_return_event(event);
+			}
+		}
+	}
+	return;
+}
+
 static int
 connect_peers(ccir_globals_t *globals)
 {
@@ -328,7 +382,7 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c, (void*)peer->p);
-			/* TODO add to known peers, exchange routing table */
+			/* TODO exchange routing table */
 		} else {
 			struct timeval now = { 0, 0 };
 
@@ -512,6 +566,9 @@ event_loop(ccir_globals_t *globals)
 		connect_peers(globals);
 		get_event(globals);
 	}
+
+	/* Notify peers we are no longer routing */
+	disconnect_peers(globals);
 
 	if (globals->verbose)
 		debug(RDB_ALL, "Exiting %s", __func__);
