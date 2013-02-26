@@ -18,6 +18,7 @@
 #include <sys/param.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <assert.h>
 
 #include "cci-router.h"
 
@@ -115,10 +116,7 @@ connect_peers(ccir_globals_t *globals)
 			peer->attempts++;
 
 			hdr = (void*)buffer;
-			hdr->connect.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_CONNECT);
-			hdr->connect.version = 1;
-			hdr->connect.len = len;
-			memcpy(hdr->connect.data, ep->uri, hdr->connect.len);
+			ccir_pack_connect(hdr, ep->uri);
 
 			len += sizeof(hdr->connect_size);
 

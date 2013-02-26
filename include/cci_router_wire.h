@@ -7,6 +7,8 @@
  *
  */
 
+#define CCIR_VERSION (1)
+
 typedef union ccir_peer_hdr {
 	/* Generic header type, used by all messages */
 	struct ccir_peer_hdr_generic {
@@ -73,3 +75,20 @@ typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_RIR,
 	CCIR_PEER_MSG_MAX = 7		/* We can never exceed this */
 } ccir_peer_hdr_type_t;
+
+static inline void
+ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
+{
+	hdr->connect.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_CONNECT);
+	hdr->connect.version = CCIR_VERSION;
+	hdr->connect.len = (uint8_t) strlen(uri);
+	memcpy(hdr->connect.data, uri, hdr->connect.len);
+	return;
+}
+
+static inline void
+ccir_pack_bye(ccir_peer_hdr_t *hdr)
+{
+	hdr->bye.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_BYE);
+	return;
+}
