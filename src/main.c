@@ -770,6 +770,7 @@ close_endpoints(ccir_globals_t *globals)
 			}
 			free(ep->peers);
 		}
+		free(ep->uri);
 		free(ep);
 	}
 	free(globals->eps);
@@ -894,7 +895,6 @@ open_endpoints(ccir_globals_t *globals)
 					cci_strerror(NULL, ret));
 			goto out;
 		}
-		*((void**)&(ep->e->context)) = (void*)ep;
 
 		if (globals->blocking) {
 			if (*fd >= (int) globals->nfds)
@@ -994,6 +994,8 @@ out_w_init:
 
 	if (globals->verbose)
 		debug(RDB_ALL, "%s is done", argv[0]);
+
+	free(globals);
 out:
 	return ret;
 }
