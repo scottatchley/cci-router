@@ -16,13 +16,14 @@ typedef union ccir_peer_hdr {
 	} generic;
 
 	/* Generic connect request (without data ptr) */
-	struct _ccir_peer_hdr_connect_generic {
+	/* Use this struct when determining the length of a header */
+	struct ccir_peer_hdr_connect_size {
 		uint8_t type;		/* CCIR_PEER_MSG_CONNECT */
 		uint8_t version;	/* For compatability */
 		uint8_t len;		/* Sender's URI length */
 		uint8_t pad;
 		/* 32b */
-	} _connect;
+	} connect_size;
 
 	/* Connect request */
 	struct ccir_peer_hdr_connect {
@@ -41,12 +42,13 @@ typedef union ccir_peer_hdr {
 	} bye;
 
 	/* Generic router information records (without data ptr) */
-	struct _ccir_peer_hdr_rir {
+	/* Use this struct when determining the length of a header */
+	struct ccir_peer_hdr_rir_size {
 		uint8_t type;		/* CCIR_PEER_MSG_RIR */
 		uint8_t count;		/* Number of included records */
 		uint8_t a[2];		/* Pad */
 		/* 32b */
-	} _rir;
+	} rir_size;
 
 	/* Router information records */
 	struct ccir_peer_hdr_rir {

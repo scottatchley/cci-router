@@ -97,7 +97,11 @@ connect_peers(ccir_globals_t *globals)
 			char buffer[256];
 			ccir_peer_t *peer = *p;
 			ccir_peer_hdr_t *hdr = (void*)buffer;
-			uint8_t len = strlen(ep->uri);
+			uint32_t len = strlen(ep->uri);
+
+			assert(len < 256); /* NOTE: magic number
+					      len must fit in a uint8_t */
+			assert((len + sizeof(hdr->connect_size)) <= sizeof(buffer));
 
 			if (peer->state != CCIR_PEER_INIT ||
 				peer->next_attempt > now.tv_sec)
@@ -116,7 +120,7 @@ connect_peers(ccir_globals_t *globals)
 			hdr->connect.len = len;
 			memcpy(hdr->connect.data, ep->uri, hdr->connect.len);
 
-			len += sizeof(hdr->_connect);
+			len += sizeof(hdr->connect_size);
 
 			ret = cci_connect(ep->e, peer->uri,
 					buffer,
