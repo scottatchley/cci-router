@@ -13,6 +13,8 @@
 #include "cci.h"
 #include "cci_router_wire.h"
 
+#include "bsd/queue.h"
+
 BEGIN_C_DECLS
 
 #define CCIR_MAX_PEERS	(128)	/* Maximum peer routers per subnet */
@@ -67,9 +69,28 @@ typedef struct ccir_peer {
 	uint32_t attempts;	/* Number of connection attempts */
 } ccir_peer_t;
 
+typedef enum ccir_rconn_state {
+	CCIR_RCONN_CLOSED = -2,	/* Closed ready for cleanup */
+	CCIR_RCONN_CLOSING = -1, /* Closing */
+	CCIR_RCONN_INIT = 0,	/* Initial state */
+	CCIR_RCONN_ACTIVE,	/* Sent dst connect request, waiting on completion */
+	CCIR_RCONN_PASSIVE,	/* Received src conn request, waiting on completion */
+	CCIR_RCONN_PENDING,	/* Wainting on E2E ACCEPT or REJECT */
+	CCIR_RCONN_CONNECTED	/* Forwarding enabled */
+} ccir_rconn_state_t;
+
+/* Routed connection */
+typedef struct ccir_rconn {
+	TAILQ_ENTRY(ccir_ep) entry;
+	cci_connection_t *src;
+	cci_connection_t *dst;
+	ccir_rconn_state_t state;
+} ccir_rconn_t;
+
 typedef struct ccir_ep {
 	cci_endpoint_t *e;	/* CCI endpoint for a device */
 	ccir_peer_t **peers;	/* Array of peer routers on subnet - NULL terminated */
+	TAILQ_HEAD(rcs, ccir_rconn) rconns; /* List of routed connections */
 	const char *uri;	/* The CCI endpoint URI */
 	cci_os_handle_t fd;	/* OS handle for blocking for events */
 	uint32_t peer_cnt;	/* Number of peer routers */
@@ -88,23 +109,6 @@ typedef struct ccir_globals {
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;
 } ccir_globals_t;
-
-typedef enum ccir_rconn_state {
-	CCIR_RCONN_CLOSED = -2,	/* Closed ready for cleanup */
-	CCIR_RCONN_CLOSING = -1, /* Closing */
-	CCIR_RCONN_INIT = 0,	/* Initial state */
-	CCIR_RCONN_ACTIVE,	/* Sent dst connect request, waiting on completion */
-	CCIR_RCONN_PASSIVE,	/* Received src conn request, waiting on completion */
-	CCIR_RCONN_PENDING,	/* Wainting on E2E ACCEPT or REJECT */
-	CCIR_RCONN_CONNECTED	/* Forwarding enabled */
-} ccir_rconn_state_t;
-
-/* Routed connection */
-typedef struct ccir_rconn {
-	cci_connection_t *src;
-	cci_connection_t *dst;
-	ccir_rconn_state_t state;
-} ccir_rconn_t;
 
 #define CCIR_DEBUG	(1)	/* Turn on for development */
 
