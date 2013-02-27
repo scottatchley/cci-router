@@ -224,10 +224,10 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 		if (!strcmp(uri, peer->uri)) {
 			int accept = strcmp(peer->uri, ep->uri);
 			if (accept == 0) {
-				debug(RDB_PEER, "%s: skipping connect request from "
+				debug(RDB_PEER, "%s: connect request from "
 						"this endpoint (%s)?", __func__,
 						ep->uri);
-				continue;
+				accept = 1;
 			}
 
 			accept = accept < 0;
@@ -770,7 +770,7 @@ close_endpoints(ccir_globals_t *globals)
 			}
 			free(ep->peers);
 		}
-		free(ep->uri);
+		free((void*)ep->uri);
 		free(ep);
 	}
 	free(globals->eps);
