@@ -916,6 +916,13 @@ open_endpoints(ccir_globals_t *globals)
 					__func__, cci_strerror(ep->e, ret));
 			goto out;
 		}
+		if (strlen(ep->uri) > CCIR_URI_MAX_LEN) {
+			debug(RDB_EP, "%s: Device [%s] endpoint URI [%s] is too long. "
+					"Closing endpoint.",
+				__func__, d->name, ep->uri);
+			ret = EINVAL;
+			goto out;
+		}
 
 		if (globals->verbose > 2)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
