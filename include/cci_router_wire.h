@@ -9,6 +9,42 @@
 
 #define CCIR_VERSION (1)
 
+typedef union ccir_rir_data {
+	/* Generic RIR payload format (without URI pointer) */
+	/* Use this struct when determining the length of the payload */
+	struct ccir_rir_rec_size {
+		uint32_t as;		/* Autonomous System id */
+		/* 32b */
+		uint32_t subnet;	/* Subnet id */
+		/* 64b */
+		uint32_t cookie;	/* Random cookie to define instance */
+		/* 96b */
+		uint16_t rate;		/* Gb/s */
+		uint8_t caps;		/* Reserved */
+		uint8_t len;		/* Router URI len */
+		/* 128b */
+		char data[1];
+	} rec_size;
+
+	/* RIR payload format */
+	struct ccir_rir_rec {
+		uint32_t as;		/* Autonomous System id */
+		/* 32b */
+		uint32_t subnet;	/* Subnet id */
+		/* 64b */
+		uint32_t cookie;	/* Random cookie to define instance */
+		/* 96b */
+		uint16_t rate;		/* Gb/s */
+		uint8_t caps;		/* Reserved */
+		uint8_t len;		/* Router URI len */
+		/* 128b */
+		char data[1];		/* Note: the URI will be padded to
+					   a multiple of 32b. The URI len will
+					   indicate the actual length of the URI
+					   less the padding. */
+	} rec;
+} ccir_rir_data_t;
+
 typedef union ccir_peer_hdr {
 	/* Generic header type, used by all messages */
 	struct ccir_peer_hdr_generic {
@@ -58,7 +94,7 @@ typedef union ccir_peer_hdr {
 		uint8_t count;		/* Number of included records */
 		uint8_t a[2];		/* Pad */
 		/* 32b */
-		char data[1];
+		char data[1];		/* RIR data payload */
 	} rir;
 } ccir_peer_hdr_t;
 

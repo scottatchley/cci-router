@@ -67,6 +67,8 @@ typedef struct ccir_peer {
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
 	uint32_t attempts;	/* Number of connection attempts */
+	uint32_t as;		/* Peer's Autonomous System id */
+	uint32_t subnet;	/* Peer's subnet id */
 } ccir_peer_t;
 
 typedef enum ccir_rconn_state {
@@ -81,10 +83,10 @@ typedef enum ccir_rconn_state {
 
 /* Routed connection */
 typedef struct ccir_rconn {
-	TAILQ_ENTRY(ccir_ep) entry;
-	cci_connection_t *src;
-	cci_connection_t *dst;
-	ccir_rconn_state_t state;
+	TAILQ_ENTRY(ccir_ep) entry; /* For ep->rconns */
+	cci_connection_t *src;	/* Source (passive) connection */
+	cci_connection_t *dst;	/* Destination (active) connection */
+	ccir_rconn_state_t state; /* State */
 } ccir_rconn_t;
 
 typedef struct ccir_ep {
@@ -99,6 +101,18 @@ typedef struct ccir_ep {
 	uint32_t need_connect;	/* Do we need to attempt a peer connect? */
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
 } ccir_ep_t;
+
+typedef struct ccir_rir {
+	TAILQ_ENTRY(ccir_table) entry; /* For table->rirs */
+	ccir_peer_t *peer;	/* Set if router is a peer */
+	const char *uri;	/* Router URI */
+	uint32_t as;		/* Autonomous System id */
+	uint32_t subnet;	/* Subnet id */
+	uint32_t instance;	/* Random cookie to define session */
+	uint16_t rate;		/* Gb/s */
+	uint8_t caps;		/* Reserved */
+	uint8_t len;		/* Router URI len */
+} ccir_rir_t;
 
 typedef struct ccir_globals {
 	ccir_ep_t **eps;	/* Array of endpoints - NULL terminated */
