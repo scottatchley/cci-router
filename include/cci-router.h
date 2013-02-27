@@ -17,7 +17,8 @@
 
 BEGIN_C_DECLS
 
-#define CCIR_MAX_PEERS	(128)	/* Maximum peer routers per subnet */
+#define CCIR_URI_MAX_LEN	(255)	/* To fit in a uint8_t */
+#define CCIR_MAX_PEERS		(128)	/* Maximum peer routers per subnet */
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
 #define CCIR_BLOCKING_TIMEOUT	(1)	/* Seconds */
 

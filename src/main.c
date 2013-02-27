@@ -848,6 +848,15 @@ open_endpoints(ccir_globals_t *globals)
 				ep->subnet = strtol(arg + 7, NULL, 0);
 				subnet++;
 			} else if (0 == strncmp("router=", arg, 7)) {
+				if (router == CCIR_MAX_PEERS) {
+					debug((RDB_CONFIG|RDB_PEER),
+						"%s: Device [%s] has more "
+						"than %d router= keyword/values. "
+						"Ignoring %s.",
+						__func__, d->name, router, arg);
+					continue;
+				}
+
 				peer = calloc(1, sizeof(*peer));
 				if (!peer) {
 					ret = ENOMEM;
