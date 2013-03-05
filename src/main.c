@@ -809,8 +809,6 @@ open_endpoints(ccir_globals_t *globals)
 		goto out;
 	}
 
-	srandomdev();
-
 	/* Make sure that the devices have specified
 	 * as, subnet, and at least one router */
 	for (i = 0; i < cnt; i++) {
