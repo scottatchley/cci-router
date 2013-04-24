@@ -108,7 +108,9 @@ disconnect_peers(ccir_globals_t *globals)
 
 			ret = cci_get_event(ep->e, &event);
 			if (ret == CCI_SUCCESS) {
+				int is_peer = 0;
 				cci_connection_t *c = NULL;
+				ccir_peer_hdr_t *h = NULL;
 
 				switch (event->type) {
 				default:
@@ -118,6 +120,20 @@ disconnect_peers(ccir_globals_t *globals)
 					if (event->send.context == c->context) {
 						waiting--;
 						cci_disconnect(c);
+					}
+					break;
+				case CCI_EVENT_RECV:
+					c = event->recv.connection;
+					h = (void*) event->recv.ptr;
+					is_peer = CCIR_IS_PEER_HDR(h->generic.type);
+					if (is_peer) {
+						ccir_peer_hdr_type_t t =
+							CCIR_PEER_HDR_TYPE(h->generic.type);
+
+						if (t == CCIR_PEER_MSG_BYE) {
+							waiting--;
+							cci_disconnect(c);
+						}
 					}
 					break;
 				}
