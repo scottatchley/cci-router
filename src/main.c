@@ -91,7 +91,7 @@ disconnect_peers(ccir_globals_t *globals)
 
 		for (j = 0; j < waiting; j++) {
 			ccir_peer_t *peer = ep->peers[j];
-			cci_connection_t *c = peer->c ? peer->c : peer->p;
+			cci_connection_t *c = peer->c;
 
 			ret = cci_send(c, &hdr, sizeof(hdr.bye), CCIR_SET_PEER_CTX(peer), 0);
 			if (ret) {
@@ -154,6 +154,9 @@ connect_peers(ccir_globals_t *globals)
 			ccir_peer_hdr_t *hdr = (void*)buffer;
 			uint32_t len = strlen(ep->uri);
 
+			if (peer->connecting)
+				continue;
+
 			assert(len < 256); /* NOTE: magic number
 					      len must fit in a uint8_t */
 			assert((len + sizeof(hdr->connect_size)) <= sizeof(buffer));
@@ -166,8 +169,9 @@ connect_peers(ccir_globals_t *globals)
 				debug(RDB_PEER, "%s: ep %s to peer %s",
 					__func__, ep->uri, peer->uri);
 
-			peer->state = CCIR_PEER_ACTIVE;
+			peer->state = CCIR_PEER_CONNECTING;
 			peer->attempts++;
+			peer->connecting++;
 
 			hdr = (void*)buffer;
 			ccir_pack_connect(hdr, ep->uri);
@@ -181,7 +185,10 @@ connect_peers(ccir_globals_t *globals)
 					CCIR_SET_PEER_CTX(peer),
 					0, &t);
 			if (ret) {
-				peer->state = CCIR_PEER_INIT;
+				peer->connecting--;
+				if (!peer->accepting)
+					peer->state = CCIR_PEER_INIT;
+
 				/* Set the next attempt to now + 2^N
 				 * where N is the number of attempts.
 				 * This provides an exponential backoff.
@@ -234,7 +241,7 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 
 			found++;
 
-			if (peer->state == CCIR_PEER_ACTIVE) {
+			if (peer->state == CCIR_PEER_CONNECTING && peer->connecting) {
 				debug(RDB_PEER, "%s: connection race detected with "
 						"%s", __func__, peer->uri);
 				/* Accept and we will sort it out later */
@@ -242,6 +249,10 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 
 			if (accept) {
 				/* Accept the connection request */
+				peer->state = CCIR_PEER_CONNECTING;
+				peer->accepting++;
+				assert(peer->accepting == 1);
+
 				if (globals->verbose) {
 					debug(RDB_PEER, "%s: accepting passive conn "
 							"from %s", __func__,
@@ -263,6 +274,8 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 					debug(RDB_PEER, "%s: cci_reject() failed %s",
 							__func__, cci_strerror(ep->e, ret));
 				}
+				if (!peer->connecting)
+					peer->state = CCIR_PEER_INIT;
 			}
 		}
 	}
@@ -326,24 +339,26 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	if (peer_accept) {
 		ccir_peer_t *peer = ctx;
 
+		peer->accepting--;
+		assert(peer->accepting == 0);
 		if (event->accept.status == CCI_SUCCESS) {
-			if (peer->state == CCIR_PEER_PASSIVE)
-				peer->state = CCIR_PEER_CONNECTED;
-			peer->p = event->accept.connection;
+			peer->state = CCIR_PEER_CONNECTED;
+			assert(peer->c == NULL);
+			peer->c = event->accept.connection;
 			ep->need_connect--;
 
 			if (globals->verbose)
 				debug(RDB_PEER, "%s: accepted %s on endpoint %s (%s) "
-						"(c=%p p=%p)",
+						"(c=%p)",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
-						(void*)peer->c, (void*)peer->p);
+						(void*)peer->c);
 			/* TODO exchange routing table */
 		} else {
 			debug(RDB_PEER, "%s: accept event for %s returned %s",
 				__func__, peer->uri,
 				cci_strerror(ep->e, event->accept.status));
-			if (peer->state == CCIR_PEER_PASSIVE)
+			if (!peer->connecting)
 				peer->state = CCIR_PEER_INIT;
 		}
 	}
@@ -365,59 +380,41 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	if (peer_connect) {
 		ccir_peer_t *peer = ctx;
 
+		peer->connecting--;
+
 		if (event->connect.status == CCI_SUCCESS) {
+			assert(peer->c == NULL);
 			peer->c = event->connect.connection;
-			if (peer->state == CCIR_PEER_ACTIVE)
-				peer->state = CCIR_PEER_CONNECTED;
-			else
-				debug(RDB_PEER, "%s: peer %s got connect event while "
-						"in state %s", __func__, peer->uri,
-						ccir_peer_state_str(peer->state));
+			peer->state = CCIR_PEER_CONNECTED;
 
 			ep->need_connect--;
 
 			if (globals->verbose)
 				debug(RDB_PEER, "%s: connected to %s on endpoint %s (%s) "
-						"(c=%p p=%p)",
+						"(c=%p)",
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
-						(void*)peer->c, (void*)peer->p);
+						(void*)peer->c);
 			/* TODO exchange routing table */
 		} else {
 			struct timeval now = { 0, 0 };
 
-			if (event->connect.status == CCI_ECONNREFUSED && peer->p) {
-				if (peer->state != CCIR_PEER_CONNECTED) {
-					debug(RDB_PEER, "%s: peer %s rejected "
-							"active connect and we have "
-							"passive conn %p, but "
-							"peer->state is %s.***",
-							__func__, peer->uri,
-							(void*)peer->p,
-							ccir_peer_state_str(peer->state));
-					/* FIXME */
-				} else {
-					/* Move peer->p to peer->c */
-					debug(RDB_PEER, "%s: moving peer %s's passive conn "
-							"to active conn ***", __func__,
-							peer->uri);
-					peer->c = peer->p;
-					peer->p = NULL;
+			if (!peer->accepting)
+				peer->state = CCIR_PEER_INIT;
+
+			if (peer->state != CCIR_PEER_CONNECTED) {
+				gettimeofday(&now, NULL);
+				/* Set the next attempt to now + 2^N
+				 * where N is the number of attempts.
+				 * This provides an exponential backoff.
+				 */
+				peer->next_attempt = now.tv_sec + (1 << peer->attempts);
+
+				if (event->connect.status == CCI_ECONNREFUSED) {
+					debug(RDB_PEER, "%s: peer %s refused a connection "
+							"from endpoint %s", __func__,
+							peer->uri, ep->uri);
 				}
-			}
-
-			gettimeofday(&now, NULL);
-			peer->state = CCIR_PEER_INIT;
-			/* Set the next attempt to now + 2^N
-			 * where N is the number of attempts.
-			 * This provides an exponential backoff.
-			 */
-			peer->next_attempt = now.tv_sec + (1 << peer->attempts);
-
-			if (event->connect.status == CCI_ECONNREFUSED) {
-				debug(RDB_PEER, "%s: peer %s refused a connection "
-						"from endpoint %s", __func__,
-						peer->uri, ep->uri);
 			}
 		}
 	} else {

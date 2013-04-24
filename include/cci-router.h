@@ -35,8 +35,7 @@ typedef enum ccir_peer_state {
 	CCIR_PEER_CLOSED = -2,	/* Connection invalid */
 	CCIR_PEER_CLOSING = -1,	/* Sent bye, waiting on ack */
 	CCIR_PEER_INIT = 0,	/* Initial state */
-	CCIR_PEER_ACTIVE,	/* Send connect request */
-	CCIR_PEER_PASSIVE,	/* Received connect request */
+	CCIR_PEER_CONNECTING,	/* Active or passive connect in progress */
 	CCIR_PEER_CONNECTED	/* Ready to exchange route info */
 } ccir_peer_state_t;
 
@@ -50,10 +49,8 @@ ccir_peer_state_str(ccir_peer_state_t state)
 		return "CCIR_PEER_CLOSING";
 	case CCIR_PEER_INIT:
 		return "CCIR_PEER_INIT";
-	case CCIR_PEER_ACTIVE:
-		return "CCIR_PEER_ACTIVE";
-	case CCIR_PEER_PASSIVE:
-		return "CCIR_PEER_PASSIVE";
+	case CCIR_PEER_CONNECTING:
+		return "CCIR_PEER_CONNECTING";
 	case CCIR_PEER_CONNECTED:
 		return "CCIR_PEER_CONNECTED";
 	}
@@ -62,12 +59,13 @@ ccir_peer_state_str(ccir_peer_state_t state)
 }
 
 typedef struct ccir_peer {
-	cci_connection_t *c;	/* Active CCI connection */
-	cci_connection_t *p;	/* Passive CCI connection */
+	cci_connection_t *c;	/* CCI connection */
 	char *uri;		/* Peer's CCI URI */
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
-	uint32_t attempts;	/* Number of connection attempts */
+	uint8_t connecting;	/* Waiting on connect event */
+	uint8_t accepting;	/* Waiting on accept/reject event */
+	uint16_t attempts;	/* Number of connection attempts */
 	uint32_t as;		/* Peer's Autonomous System id */
 	uint32_t subnet;	/* Peer's subnet id */
 } ccir_peer_t;
