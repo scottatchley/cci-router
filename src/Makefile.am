@@ -4,4 +4,4 @@
 #
 
 bin_PROGRAMS = cci-router
-cci_router_SOURCES = main.c cci-router.h
+cci_router_SOURCES = main.c cci-router.h murmur3.h murmur3.c

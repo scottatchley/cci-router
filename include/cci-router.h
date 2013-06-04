@@ -107,6 +107,7 @@ typedef struct ccir_rir {
 	const char *uri;	/* Router URI */
 	uint32_t as;		/* Autonomous System id */
 	uint32_t subnet;	/* Subnet id */
+	uint32_t router;	/* Router id */
 	uint32_t instance;	/* Random cookie to define session */
 	uint16_t rate;		/* Gb/s */
 	uint8_t caps;		/* Reserved */
@@ -118,6 +119,7 @@ typedef struct ccir_globals {
 	uint32_t ep_cnt;	/* Number of endpoints */
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
+	uint32_t id;		/* our id from hashed ep->uris */
 	uint32_t verbose;	/* Level of verbose output */
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;

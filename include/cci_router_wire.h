@@ -17,13 +17,14 @@ typedef union ccir_rir_data {
 		/* 32b */
 		uint32_t subnet;	/* Subnet id */
 		/* 64b */
-		uint32_t cookie;	/* Random cookie to define instance */
+		uint32_t router;	/* Router id */
 		/* 96b */
+		uint32_t cookie;	/* Random cookie to define instance */
+		/* 128b */
 		uint16_t rate;		/* Gb/s */
 		uint8_t caps;		/* Reserved */
 		uint8_t len;		/* Router URI len */
-		/* 128b */
-		char data[1];
+		/* 160b */
 	} rec_size;
 
 	/* RIR payload format */
@@ -32,12 +33,14 @@ typedef union ccir_rir_data {
 		/* 32b */
 		uint32_t subnet;	/* Subnet id */
 		/* 64b */
-		uint32_t cookie;	/* Random cookie to define instance */
+		uint32_t router;	/* Router id */
 		/* 96b */
+		uint32_t cookie;	/* Random cookie to define instance */
+		/* 128b */
 		uint16_t rate;		/* Gb/s */
 		uint8_t caps;		/* Reserved */
 		uint8_t len;		/* Router URI len */
-		/* 128b */
+		/* 160b */
 		char data[1];		/* Note: the URI will be padded to
 					   a multiple of 32b. The URI len will
 					   indicate the actual length of the URI

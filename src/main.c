@@ -21,6 +21,7 @@
 #include <assert.h>
 
 #include "cci-router.h"
+#include "bsd/murmur3.h"
 
 static void
 usage(char *procname)
@@ -253,6 +254,7 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 				accept = 1;
 			}
 
+			/* accept if their URI is less than ours */
 			accept = accept < 0;
 
 			found++;
@@ -260,7 +262,6 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 			if (peer->state == CCIR_PEER_CONNECTING && peer->connecting) {
 				debug(RDB_PEER, "%s: connection race detected with "
 						"%s", __func__, peer->uri);
-				/* Accept and we will sort it out later */
 			}
 
 			if (accept) {
@@ -330,6 +331,7 @@ handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *even
 	if (is_peer) {
 		handle_peer_connect_request(globals, ep, event);
 	} else {
+		assert(0);
 	}
 
 	return;
@@ -377,6 +379,9 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			if (!peer->connecting)
 				peer->state = CCIR_PEER_INIT;
 		}
+	} else {
+		/* e2e accept */
+		assert(0);
 	}
 
 	return;
@@ -800,6 +805,7 @@ open_endpoints(ccir_globals_t *globals)
 	int ret = 0, i = 0, cnt = 0;
 	cci_device_t * const *devs = NULL;
 	ccir_ep_t **es = NULL;
+	uint32_t hash = 0;
 
 	ret = cci_get_devices(&devs);
 	if (ret) {
@@ -935,6 +941,8 @@ open_endpoints(ccir_globals_t *globals)
 			goto out;
 		}
 
+		MurmurHash3_x86_32(ep->uri, strlen(ep->uri), hash, (void *) &hash);
+
 		if (globals->verbose > 2)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
 					ep->uri, d->name);
@@ -944,8 +952,12 @@ open_endpoints(ccir_globals_t *globals)
 		debug(RDB_ALL, "Unable to route with %d endpoint%s.",
 				cnt, cnt == 0 ? "s" : "");
 
+	if (globals->verbose)
+		debug(RDB_EP, "%s: globals->id = 0x%x", __func__, hash);
+
 	globals->eps = es;
 	globals->ep_cnt = cnt;
+	globals->id = hash;
 out:
 	if (ret)
 		close_endpoints(globals);
