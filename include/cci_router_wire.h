@@ -131,3 +131,10 @@ ccir_pack_bye(ccir_peer_hdr_t *hdr)
 	hdr->bye.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_BYE);
 	return;
 }
+
+static inline void
+ccir_pack_rir(ccir_peer_hdr_t *hdr)
+{
+	hdr->rir.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RIR);
+	hdr->rir.count = 1;
+}

@@ -337,6 +337,44 @@ handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *even
 	return;
 }
 
+static void
+send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
+{
+	char buf[256 + 24]; /* FIXME Magic number URI + headers */
+	int len = 0, ulen = 0, pad = 0, ret = 0;
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t *)buf;
+	ccir_rir_data_t *rir = (ccir_rir_data_t *)hdr->rir.data;
+
+	len = sizeof(hdr->rir_size) + sizeof(rir->rec_size);
+	ulen = strlen(ep->uri);
+	len += ulen;
+
+	pad = ulen & 0x3;
+	if (pad)
+		len += 4 - pad;
+
+	assert(len < (int) peer->c->max_send_size);
+	assert(len < (int) sizeof(buf));
+
+	memset(buf, 0, sizeof(buf));
+	ccir_pack_rir(hdr);
+	rir->rec.as = ep->as;
+	rir->rec.subnet = ep->subnet;
+	rir->rec.router = globals->id;
+	rir->rec.cookie = 0; /* FIXME */
+	rir->rec.rate = ep->e->device->rate / 1000000000;
+	if (!rir->rec.rate) rir->rec.rate = 1;
+	rir->rec.len = ulen;
+
+	ret = cci_send(peer->c, buf, len, NULL, 0);
+	if (ret)
+		debug(RDB_PEER, "%s: send RIR to %s "
+			"failed with %s", __func__,
+			peer->uri, cci_strerror(ep->e, ret));
+
+	return;
+}
+
 /* Handle an accept event.
  *
  * Need to determine if the event if for router-to-router use or
@@ -360,6 +398,8 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		peer->accepting--;
 		assert(peer->accepting == 0);
 		if (event->accept.status == CCI_SUCCESS) {
+			ccir_ep_t **e = NULL;
+
 			peer->state = CCIR_PEER_CONNECTED;
 			assert(peer->c == NULL);
 			peer->c = event->accept.connection;
@@ -372,6 +412,8 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c);
 			/* TODO exchange routing table */
+			for (e = globals->eps; *e != NULL; e++)
+				send_rir(globals, *e, peer);
 		} else {
 			debug(RDB_PEER, "%s: accept event for %s returned %s",
 				__func__, peer->uri,
@@ -404,6 +446,8 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		peer->connecting--;
 
 		if (event->connect.status == CCI_SUCCESS) {
+			ccir_ep_t **e = NULL;
+
 			assert(peer->c == NULL);
 			peer->c = event->connect.connection;
 			peer->state = CCIR_PEER_CONNECTED;
@@ -416,7 +460,12 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 						__func__, peer->uri, ep->uri,
 						ccir_peer_state_str(peer->state),
 						(void*)peer->c);
+
 			/* TODO exchange routing table */
+			/* send our rir */
+			for (e = globals->eps; *e != NULL; e++)
+				send_rir(globals, *e, peer);
+			/* send forwarded rir */
 		} else {
 			struct timeval now = { 0, 0 };
 
@@ -453,6 +502,9 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	int ret = 0, up = 0;
 	uint32_t i = 0;
+
+	debug(RDB_EP, "%s: EP %p: got %s", __func__, (void*)ep,
+			cci_event_type_str(event->type));
 
 	switch (event->type) {
 	case CCI_EVENT_SEND:
