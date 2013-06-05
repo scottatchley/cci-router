@@ -1,0 +1,80 @@
+# Sample ccir_config
+# Follows the CCI config file syntax with the following additions:
+#
+# as = <NUM>      where NUM is the Autonomous System ID.
+#
+#                 This value is unique per organization, requires that all
+#                 internal subnets be routable to each other, and routes to
+#                 other AS are via the WAN.
+#
+#                 Each CCI device must have one and only one AS ID. Each
+#                 device's AS ID must be the same.
+#
+#                 If expecting to route to other AS, obtain an unique AS ID
+#                 from ORNL.
+#
+#                 The value must fit in a uint32_t.
+#
+# subnet = <NUM>  where NUM is the subnet number for a specific, non-routed
+#                 fabric and a specific CCI transport.
+#
+#                 By non-routed, each CCI endpoint within this subnet can
+#                 communicate with every other CCI endpoint. The underlying
+#                 network may be routed such as an IP network when using the
+#                 sock transport.
+#
+#                 When a single fabric supports multiple CCI transports, each
+#                 device description requires a unique subnet ID.  For example,
+#                 if there is an InfiniBand fabric and the hosts have both the
+#                 verbs and sock transports and the sock transport sees the
+#                 IPoIB device, then the verbs device and sock device would
+#                 need distinct subnet IDs.
+#
+#                 Within an AS, each subnet ID must be unique. Subnet IDs do
+#                 not need to be unique across AS.
+#
+#                 Each CCI device must have one and only one subnet ID.
+#
+#                 The value must fit in a uint32_t.
+#
+# router = <URI>  where URI is the CCI URI of the router with which we wish to
+#                 communicate.
+#
+#                 The router key/value pair is optional. If we are a router and
+#                 if we are connected to every subnet, then we do not forward
+#                 to any other routers. In this case, then we only need the
+#                 devices with the AS IDs and subnet IDs.
+#
+#                 If the number of subnets in the AS is greater than the number
+#                 of devices in this file, then we must forward via a router.
+#                 In this case, there must be at least one router key/value
+#                 pair in at least one device.
+#
+#                 A device may have multiple router key/value pairs per device
+#                 if multiple routers are present on the subnet.
+
+# In the below example, this router connects to three subnets.
+#
+#[Cray Gemini]
+#transport = gni
+#interface = ipogif0
+#port = 5555
+#as = 200
+#subnet = 10
+#router = gni://10.10.248.46:5555
+#
+#[InfiniBand SAN]
+#transport = verbs
+#interface = ib0
+#port = 6666
+#as = 200
+#subnet = 15
+#router = verbs://10.15.0.121:6666
+#
+#[Backbone Ethernet]
+#transport = sock
+#interface = eth3
+#port = 7777
+#as = 200
+#subnet = 25
+#router = sock://10.25.0.3:7777

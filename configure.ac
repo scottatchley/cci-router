@@ -20,6 +20,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_PROG_CC
 AC_PROG_INSTALL
 AC_PROG_RANLIB
+AC_PROG_MKDIR_P
 AM_PROG_CC_C_O
 
 AC_CONFIG_HEADERS([include/config.h])
@@ -27,6 +28,6 @@ AC_CONFIG_HEADERS([include/config.h])
 CCIR_DEFINE_ARGS
 CCIR_CHECK_CCI
 
-AC_CONFIG_FILES([Makefile include/Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile src/Makefile etc/Makefile etc/ccir/Makefile])
 
 AC_OUTPUT

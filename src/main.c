@@ -620,8 +620,8 @@ check_file(ccir_globals_t *globals, char *fname)
  * 2. Command line config file
  * 3. CCI_CONFIG environment variable
  * 4. Local config file ($PWD/ccir_config)
- * 5. CCIR installed config file (/$INSTALL_PATH/etc/ccir/config)
- * 6. Global config file (/etc/ccir/config)
+ * 5. CCIR installed config file (/$INSTALL_PATH/etc/ccir/ccir_config)
+ * 6. Global config file (/etc/ccir/ccir_config)
  */
 static int
 get_config(ccir_globals_t *globals, char *procname, char *config_option)
@@ -690,7 +690,7 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 	/* check for installed config */
 	if (!done) {
 		char *installdir = NULL, *bindir = NULL, fname[MAXPATHLEN];
-		char *etcdir = "/etc/ccir/config";
+		char *etcdir = "/etc/ccir/ccir_config";
 
 		installdir = dirname(procname);
 
@@ -719,7 +719,7 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 
 	/* check for global config */
 	if (!done) {
-		char *fname = "/etc/ccir/config";
+		char *fname = "/etc/ccir/ccir_config";
 
 		ret = check_file(globals, fname);
 		if (!ret) {
@@ -741,8 +741,8 @@ get_config(ccir_globals_t *globals, char *procname, char *config_option)
 		debug(RDB_CONFIG, "%s", "2. CCI_CONFIG environment variable");
 		debug(RDB_CONFIG, "%s", "3. Local config file ($PWD/ccir_config)");
 		debug(RDB_CONFIG, "%s", "4. CCIR installed config file "
-				"(/$INSTALL_PATH/etc/ccir/config)");
-		debug(RDB_CONFIG, "%s", "5. Global config file (/etc/ccir/config)");
+				"(/$INSTALL_PATH/etc/ccir/ccir_config)");
+		debug(RDB_CONFIG, "%s", "5. Global config file (/etc/ccir/ccir_config)");
 	}
 
 	return ret;
