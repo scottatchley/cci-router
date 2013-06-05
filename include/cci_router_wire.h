@@ -115,6 +115,21 @@ typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_MAX = 7		/* We can never exceed this */
 } ccir_peer_hdr_type_t;
 
+static inline const char *
+ccir_peer_hdr_str(ccir_peer_hdr_type_t type)
+{
+	switch (type) {
+	case CCIR_PEER_MSG_CONNECT:
+		return "CCIR_PEER_MSG_CONNECT";
+	case CCIR_PEER_MSG_BYE:
+		return "CCIR_PEER_MSG_BYE";
+	case CCIR_PEER_MSG_RIR:
+		return "CCIR_PEER_MSG_RIR";
+	default:
+		return "Unknown peer msg type";
+	}
+}
+
 static inline void
 ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 {

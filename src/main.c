@@ -497,6 +497,89 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	return;
 }
 
+static void
+handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+		cci_event_t *event)
+{
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr;
+	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
+
+	debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
+			__func__, (void*)ep, peer->uri);
+	debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
+			__func__, (void*)ep, rir->rec.as, rir->rec.as);
+	debug(RDB_PEER, "%s: EP %p:      subnet = %u",
+			__func__, (void*)ep, rir->rec.subnet);
+	debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
+			__func__, (void*)ep, rir->rec.router, rir->rec.router);
+	debug(RDB_PEER, "%s: EP %p:      cookie = %u (0x%x)",
+			__func__, (void*)ep, rir->rec.cookie, rir->rec.cookie);
+	debug(RDB_PEER, "%s: EP %p:      rate   = %hu",
+			__func__, (void*)ep, rir->rec.rate);
+	debug(RDB_PEER, "%s: EP %p:      len    = %hu",
+			__func__, (void*)ep, rir->rec.len);
+
+	return;
+}
+
+static void
+handle_peer_recv_bye(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+		cci_event_t *event)
+{
+	return;
+}
+
+static void
+handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+		cci_event_t *event)
+{
+	const ccir_peer_hdr_t *hdr = (void*)event->recv.ptr;
+
+	debug(RDB_PEER, "%s: EP %p: recv'd %s msg %d bytes", __func__,
+			(void*)ep,
+			ccir_peer_hdr_str(CCIR_PEER_HDR_TYPE(hdr->generic.type)),
+			event->recv.len);
+
+	switch (CCIR_PEER_HDR_TYPE(hdr->generic.type)) {
+		case CCIR_PEER_MSG_RIR:
+			handle_peer_recv_rir(globals, ep, peer, event);
+			break;
+		case CCIR_PEER_MSG_BYE:
+			handle_peer_recv_bye(globals, ep, peer, event);
+			break;
+		default:
+			debug(RDB_PEER, "%s: EP %p: unknown message type from "
+					"%s with %d bytes", __func__, (void*)ep,
+					peer->uri, event->recv.len);
+			break;
+	}
+}
+
+/* Handle a receive completion event.
+ *
+ * Need to determine if the event if for router-to-router use or
+ * for a client.
+ */
+static void
+handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	cci_connection_t *connection = event->recv.connection;
+	int is_peer = CCIR_IS_PEER_CTX(connection->context);
+
+	if (is_peer) {
+		void *ctx = CCIR_CTX(connection->context);
+		ccir_peer_t *peer = (ccir_peer_t*)ctx;
+
+		assert(peer->c == connection);
+
+		handle_peer_recv(globals, ep, peer, event);
+	} else {
+		/* TODO */
+		assert(0);
+	}
+	return;
+}
+
 static int
 handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
@@ -510,6 +593,7 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	case CCI_EVENT_SEND:
 		break;
 	case CCI_EVENT_RECV:
+		handle_recv(globals, ep, event);
 		break;
 	case CCI_EVENT_CONNECT_REQUEST:
 		handle_connect_request(globals, ep, event);
