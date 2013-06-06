@@ -521,14 +521,36 @@ print_router_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		printf("router id %u instance %u count %u", router->id,
+		fprintf(stderr, "router id %u instance %u count %u\n", router->id,
 				router->instance, router->count);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		printf("router id %u instance %u count %u", router->id,
+		fprintf(stderr, "router id %u instance %u count %u\n", router->id,
 				router->instance, router->count);
+		break;
+	}
+}
+
+static void
+print_subnet_tree(const void *nodep, const VISIT which, const int depth)
+{
+	uint32_t *id = *(uint32_t **) nodep;
+	ccir_subnet_t *subnet = container_of(id, ccir_subnet_t, id);
+
+	switch (which) {
+	case preorder:
+		break;
+	case postorder:
+		fprintf(stderr, "subnet id %u rate %hu count %u\n", subnet->id,
+				subnet->rate, subnet->count);
+		break;
+	case endorder:
+		break;
+	case leaf:
+		fprintf(stderr, "subnet id %u rate %hu count %u\n", subnet->id,
+				subnet->rate, subnet->count);
 		break;
 	}
 }
@@ -597,6 +619,49 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		if (globals->verbose)
 			twalk(globals->topo->routers, print_router_tree);
 	}
+	/* TODO: check for subnet id in router->subnets
+	 * if not found, add it */
+
+	node = tfind(&rir->rec.subnet, &(globals->topo->subnets), compare_u32);
+	if (node) {
+		uint32_t *id = *((uint32_t**)node);
+		subnet = container_of(id, ccir_subnet_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding ref to subnet %u "
+				"(count was %u)", __func__, (void*)ep,
+				subnet->id, subnet->count);
+		}
+		subnet->count++;
+	} else {
+		int empty = globals->topo->subnets == NULL;
+
+		subnet = calloc(1, sizeof(*subnet));
+		if (!subnet) {
+			/* TODO */
+			assert(0);
+		}
+		subnet->id = rir->rec.subnet;
+		subnet->count = 1;
+		subnet->rate = rir->rec.rate;
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding subnet %u",
+				__func__, (void*)ep, subnet->id);
+		}
+
+		node = tsearch(&subnet->id, &(globals->topo->subnets), compare_u32);
+		if (!node && !empty) {
+			/* TODO */
+			assert(0);
+		}
+
+		if (globals->verbose)
+			twalk(globals->topo->subnets, print_subnet_tree);
+	}
+
+	/* TODO: check for router id in subnet->routers
+	 * if not found, add it */
 
 	return;
 }

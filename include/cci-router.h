@@ -110,7 +110,7 @@ typedef struct ccir_router {
 
 typedef struct ccir_subnet {
 	void *routers;		/* Tree of router IDs for this subnet */
-	uint32_t subnet;	/* Subnet id */
+	uint32_t id;		/* Subnet id */
 	uint32_t count;		/* Number of routers on subnet */
 	uint16_t rate;		/* Gb/s */
 } ccir_subnet_t;
