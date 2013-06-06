@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <assert.h>
+#include <search.h>
 
 #include "cci-router.h"
 #include "bsd/murmur3.h"
@@ -82,7 +84,7 @@ disconnect_peers(ccir_globals_t *globals)
 	ccir_peer_hdr_t hdr;
 
 	memset(&hdr, 0, sizeof(hdr));
-	ccir_pack_bye(&hdr);
+	ccir_pack_del(&hdr, 1);
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
 		int j = 0, waiting = 0;
@@ -94,9 +96,10 @@ disconnect_peers(ccir_globals_t *globals)
 			ccir_peer_t *peer = ep->peers[j];
 			cci_connection_t *c = peer->c;
 
-			ret = cci_send(c, &hdr, sizeof(hdr.bye), CCIR_SET_PEER_CTX(peer), 0);
+			ret = cci_send(c, &hdr, sizeof(hdr.del_size),
+					CCIR_SET_PEER_CTX(peer), 0);
 			if (ret) {
-				debug(RDB_PEER, "%s: sending bye to %s failed with %s",
+				debug(RDB_PEER, "%s: sending del to %s failed with %s",
 					__func__, peer->uri, cci_strerror(ep->e, ret));
 				/* clean up now */
 				waiting--;
@@ -131,7 +134,7 @@ disconnect_peers(ccir_globals_t *globals)
 						ccir_peer_hdr_type_t t =
 							CCIR_PEER_HDR_TYPE(h->generic.type);
 
-						if (t == CCIR_PEER_MSG_BYE) {
+						if (t == CCIR_PEER_MSG_DEL) {
 							waiting--;
 							cci_disconnect(c);
 						}
@@ -361,7 +364,7 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	rir->rec.as = ep->as;
 	rir->rec.subnet = ep->subnet;
 	rir->rec.router = globals->id;
-	rir->rec.cookie = 0; /* FIXME */
+	rir->rec.instance = 0; /* FIXME */
 	rir->rec.rate = ep->e->device->rate / 1000000000;
 	if (!rir->rec.rate) rir->rec.rate = 1;
 	rir->rec.len = ulen;
@@ -497,33 +500,109 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	return;
 }
 
+static int
+compare_u32(const void *pa, const void *pb)
+{
+	if (*(uint32_t *) pa < *(uint32_t *) pb)
+		return -1;
+	if (*(uint32_t *) pa > *(uint32_t *) pb)
+		return 1;
+
+	return 0; /* match */
+}
+
+static void
+print_router_tree(const void *nodep, const VISIT which, const int depth)
+{
+	uint32_t *id = *(uint32_t **) nodep;
+	ccir_router_t *router = container_of(id, ccir_router_t, id);
+
+	switch (which) {
+	case preorder:
+		break;
+	case postorder:
+		printf("router id %u instance %u count %u", router->id,
+				router->instance, router->count);
+		break;
+	case endorder:
+		break;
+	case leaf:
+		printf("router id %u instance %u count %u", router->id,
+				router->instance, router->count);
+		break;
+	}
+}
+
 static void
 handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr;
 	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
+	ccir_router_t *router = NULL;
+	ccir_subnet_t *subnet = NULL;
+	void *node = NULL;
 
-	debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
-			__func__, (void*)ep, peer->uri);
-	debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
-			__func__, (void*)ep, rir->rec.as, rir->rec.as);
-	debug(RDB_PEER, "%s: EP %p:      subnet = %u",
-			__func__, (void*)ep, rir->rec.subnet);
-	debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
-			__func__, (void*)ep, rir->rec.router, rir->rec.router);
-	debug(RDB_PEER, "%s: EP %p:      cookie = %u (0x%x)",
-			__func__, (void*)ep, rir->rec.cookie, rir->rec.cookie);
-	debug(RDB_PEER, "%s: EP %p:      rate   = %hu",
-			__func__, (void*)ep, rir->rec.rate);
-	debug(RDB_PEER, "%s: EP %p:      len    = %hu",
-			__func__, (void*)ep, rir->rec.len);
+	if (globals->verbose) {
+		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
+				__func__, (void*)ep, peer->uri);
+		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
+				__func__, (void*)ep, rir->rec.as, rir->rec.as);
+		debug(RDB_PEER, "%s: EP %p:      subnet = %u",
+				__func__, (void*)ep, rir->rec.subnet);
+		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
+				__func__, (void*)ep, rir->rec.router, rir->rec.router);
+		debug(RDB_PEER, "%s: EP %p:      instance = %u (0x%x)",
+				__func__, (void*)ep, rir->rec.instance, rir->rec.instance);
+		debug(RDB_PEER, "%s: EP %p:      rate   = %hu",
+				__func__, (void*)ep, rir->rec.rate);
+		debug(RDB_PEER, "%s: EP %p:      len    = %hu",
+				__func__, (void*)ep, rir->rec.len);
+	}
+
+	node = tfind(&rir->rec.router, &(globals->topo->routers), compare_u32);
+	if (node) {
+		uint32_t *id = *((uint32_t**)node);
+		router = container_of(id, ccir_router_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding ref to router %u "
+				"(count was %u)", __func__, (void*)ep,
+				router->id, router->count);
+		}
+		router->count++;
+	} else {
+		int empty = globals->topo->routers == NULL;
+
+		router = calloc(1, sizeof(*router));
+		if (!router) {
+			/* TODO */
+			assert(0);
+		}
+		router->id = rir->rec.router;
+		router->instance = rir->rec.instance;
+		router->count = 1;
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding router %u",
+				__func__, (void*)ep, router->id);
+		}
+
+		node = tsearch(&router->id, &(globals->topo->routers), compare_u32);
+		if (!node && !empty) {
+			/* TODO */
+			assert(0);
+		}
+
+		if (globals->verbose)
+			twalk(globals->topo->routers, print_router_tree);
+	}
 
 	return;
 }
 
 static void
-handle_peer_recv_bye(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
 	return;
@@ -544,8 +623,8 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		case CCIR_PEER_MSG_RIR:
 			handle_peer_recv_rir(globals, ep, peer, event);
 			break;
-		case CCIR_PEER_MSG_BYE:
-			handle_peer_recv_bye(globals, ep, peer, event);
+		case CCIR_PEER_MSG_DEL:
+			handle_peer_recv_del(globals, ep, peer, event);
 			break;
 		default:
 			debug(RDB_PEER, "%s: EP %p: unknown message type from "
@@ -1108,12 +1187,21 @@ main(int argc, char *argv[])
 	char *config_file = NULL;
 	uint32_t caps = 0;
 	ccir_globals_t *globals = NULL;
+	ccir_topo_t *topo = NULL;
 
 	globals = calloc(1, sizeof(*globals));
 	if (!globals) {
 		ret = ENOMEM;
 		goto out;
 	}
+
+	topo = calloc(1, sizeof(*topo));
+	if (!topo) {
+		free(globals);
+		ret = ENOMEM;
+		goto out;
+	}
+	globals->topo = topo;
 
 	while ((c = getopt(argc, argv, "f:vb")) != -1) {
 		switch (c) {
@@ -1170,6 +1258,7 @@ out_w_init:
 	if (globals->verbose)
 		debug(RDB_ALL, "%s is done", argv[0]);
 
+	free(globals->topo);
 	free(globals);
 out:
 	return ret;

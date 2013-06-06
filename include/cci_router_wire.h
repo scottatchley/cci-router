@@ -19,7 +19,7 @@ typedef union ccir_rir_data {
 		/* 64b */
 		uint32_t router;	/* Router id */
 		/* 96b */
-		uint32_t cookie;	/* Random cookie to define instance */
+		uint32_t instance;	/* Random cookie to define instance */
 		/* 128b */
 		uint16_t rate;		/* Gb/s */
 		uint8_t caps;		/* Reserved */
@@ -35,7 +35,7 @@ typedef union ccir_rir_data {
 		/* 64b */
 		uint32_t router;	/* Router id */
 		/* 96b */
-		uint32_t cookie;	/* Random cookie to define instance */
+		uint32_t instance;	/* Random cookie to define instance */
 		/* 128b */
 		uint16_t rate;		/* Gb/s */
 		uint8_t caps;		/* Reserved */
@@ -76,11 +76,23 @@ typedef union ccir_peer_hdr {
 		char data[1];		/* Start of sender's URI */
 	} connect;
 
-	/* Bye message */
-	struct ccir_peer_hdr_bye {
-		uint8_t type;		/* CCIR_PEER_MSG_BYE */
-		uint8_t a[3];		/* Pad */
-	} bye;
+	/* Generic delete msg (without data ptr) */
+	/* Use this struct when determining the length of a header */
+	struct ccir_peer_hdr_del_size {
+		uint8_t type;		/* CCIR_PEER_MSG_DEL */
+		uint8_t bye;		/* Set if closing connection */
+		uint8_t a[2];		/* Pad */
+		/* 32b */
+	} del_size;
+
+	/* Delete message */
+	struct ccir_peer_hdr_del {
+		uint8_t type;		/* CCIR_PEER_MSG_DEL */
+		uint8_t bye;		/* Set if closing connection */
+		uint8_t a[2];		/* Pad */
+		/* 32b */
+		char data[1];		/* Start of router's ID */
+	} del;
 
 	/* Generic router information records (without data ptr) */
 	/* Use this struct when determining the length of a header */
@@ -110,7 +122,7 @@ typedef union ccir_peer_hdr {
 
 typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_CONNECT = 0,
-	CCIR_PEER_MSG_BYE,
+	CCIR_PEER_MSG_DEL,
 	CCIR_PEER_MSG_RIR,
 	CCIR_PEER_MSG_MAX = 7		/* We can never exceed this */
 } ccir_peer_hdr_type_t;
@@ -121,8 +133,8 @@ ccir_peer_hdr_str(ccir_peer_hdr_type_t type)
 	switch (type) {
 	case CCIR_PEER_MSG_CONNECT:
 		return "CCIR_PEER_MSG_CONNECT";
-	case CCIR_PEER_MSG_BYE:
-		return "CCIR_PEER_MSG_BYE";
+	case CCIR_PEER_MSG_DEL:
+		return "CCIR_PEER_MSG_DEL";
 	case CCIR_PEER_MSG_RIR:
 		return "CCIR_PEER_MSG_RIR";
 	default:
@@ -141,9 +153,10 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 }
 
 static inline void
-ccir_pack_bye(ccir_peer_hdr_t *hdr)
+ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye)
 {
-	hdr->bye.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_BYE);
+	hdr->del.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_DEL);
+	hdr->del.bye = bye;
 	return;
 }
 

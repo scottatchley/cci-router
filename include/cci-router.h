@@ -101,20 +101,28 @@ typedef struct ccir_ep {
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
 } ccir_ep_t;
 
-typedef struct ccir_rir {
-	TAILQ_ENTRY(ccir_table) entry; /* For table->rirs */
-	ccir_peer_t *peer;	/* Set if router is a peer */
-	const char *uri;	/* Router URI */
-	uint32_t as;		/* Autonomous System id */
+typedef struct ccir_router {
+	void *subnets;		/* Tree of subnet IDs routed by this router */
+	uint32_t id;		/* Router's ID */
+	uint32_t instance;	/* Router's instance */
+	uint32_t count;		/* Number of subnets served */
+} ccir_router_t;
+
+typedef struct ccir_subnet {
+	void *routers;		/* Tree of router IDs for this subnet */
 	uint32_t subnet;	/* Subnet id */
-	uint32_t router;	/* Router id */
-	uint32_t instance;	/* Random cookie to define session */
+	uint32_t count;		/* Number of routers on subnet */
 	uint16_t rate;		/* Gb/s */
-	uint8_t caps;		/* Reserved */
-	uint8_t len;		/* Router URI len */
-} ccir_rir_t;
+} ccir_subnet_t;
+
+typedef struct ccir_topo {
+	void *subnets;		/* tree of subnets sorted on subnet ID */
+	void *routers;		/* tree of known routers sorted on router->id */
+	void *routes;		/* tree of routes originating locally */
+} ccir_topo_t;
 
 typedef struct ccir_globals {
+	ccir_topo_t *topo;	/* topology information */
 	ccir_ep_t **eps;	/* Array of endpoints - NULL terminated */
 	uint32_t ep_cnt;	/* Number of endpoints */
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
@@ -124,6 +132,8 @@ typedef struct ccir_globals {
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;
 } ccir_globals_t;
+
+#define container_of(p,stype,field) ((stype *)(((uint8_t *)(p)) - offsetof(stype, field)))
 
 #define CCIR_DEBUG	(1)	/* Turn on for development */
 
