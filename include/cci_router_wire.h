@@ -89,7 +89,8 @@ typedef union ccir_peer_hdr {
 	struct ccir_peer_hdr_del {
 		uint8_t type;		/* CCIR_PEER_MSG_DEL */
 		uint8_t bye;		/* Set if closing connection */
-		uint8_t a[2];		/* Pad */
+		uint8_t count;		/* Number of endpoints */
+		uint8_t a;		/* Pad */
 		/* 32b */
 		char data[1];		/* Start of router's ID */
 	} del;
@@ -153,10 +154,11 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 }
 
 static inline void
-ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye)
+ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye, uint8_t count)
 {
 	hdr->del.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_DEL);
 	hdr->del.bye = bye;
+	hdr->del.count = count;
 	return;
 }
 

@@ -86,7 +86,7 @@ disconnect_peers(ccir_globals_t *globals)
 	uint32_t *id = (uint32_t *)&(hdr->del.data);
 
 	memset(hdr, 0, sizeof(*hdr));
-	ccir_pack_del(hdr, 1);
+	ccir_pack_del(hdr, 1, (uint8_t)globals->ep_cnt);
 	*id = globals->id;
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
@@ -145,7 +145,7 @@ disconnect_peers(ccir_globals_t *globals)
 							if (globals->verbose) {
 								debug(RDB_PEER,
 									"%s: EP %p: "
-									"router %u "
+									"router 0x%x "
 									"leaving",
 									__func__,
 									(void*)ep,
@@ -602,7 +602,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		router = container_of(id, ccir_router_t, id);
 
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding ref to router %u "
+			debug(RDB_PEER, "%s: EP %p: adding ref to router 0x%x "
 				"(count was %u)", __func__, (void*)ep,
 				router->id, router->count);
 		}
@@ -620,7 +620,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		router->count = 1;
 
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding router %u",
+			debug(RDB_PEER, "%s: EP %p: adding router 0x%x",
 				__func__, (void*)ep, router->id);
 		}
 
@@ -686,10 +686,40 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr;
 	uint32_t *id = (uint32_t*)hdr->del.data;
+	void *node = NULL;
+	ccir_router_t *router = NULL;
 
 	if (globals->verbose)
 		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) leaving",  __func__,
 			(void*)ep, peer->uri, *id);
+
+	node = tfind(id, &(globals->topo->routers), compare_u32);
+	if (node) {
+		uint8_t i = 0, count = hdr->del.count;
+		uint32_t *router_id = *((uint32_t**)node);
+
+		router = container_of(router_id, ccir_router_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: removing %d ref%s from router 0x%x "
+				"(count was %u)", __func__, (void*)ep,
+				count, count == 1 ? "" : "s",
+				router->id, router->count);
+		}
+		for (i = 0; i < count; i++) {
+			if (router->count == 0) {
+				debug(RDB_ALL, "%s: EP %p: decrementing router 0x%x "
+						"with count 0", __func__, (void*)ep,
+						router->id);
+				assert(router->count);
+			}
+			router->count--;
+		}
+	} else {
+		debug(RDB_PEER, "%s: EP %p: unable to find router 0x%x", __func__,
+				(void*)ep, *id);
+	}
+
 
 	return;
 }
