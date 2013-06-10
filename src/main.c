@@ -81,10 +81,13 @@ static void
 disconnect_peers(ccir_globals_t *globals)
 {
 	int ret = 0, i = 0;
-	ccir_peer_hdr_t hdr;
+	char buf[8];		/* FIXME magic number - hdr + peer ID */
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t *)buf;
+	uint32_t *id = (uint32_t *)&(hdr->del.data);
 
-	memset(&hdr, 0, sizeof(hdr));
-	ccir_pack_del(&hdr, 1);
+	memset(hdr, 0, sizeof(*hdr));
+	ccir_pack_del(hdr, 1);
+	*id = globals->id;
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
 		int j = 0, waiting = 0;
@@ -96,7 +99,7 @@ disconnect_peers(ccir_globals_t *globals)
 			ccir_peer_t *peer = ep->peers[j];
 			cci_connection_t *c = peer->c;
 
-			ret = cci_send(c, &hdr, sizeof(hdr.del_size),
+			ret = cci_send(c, buf, sizeof(buf),
 					CCIR_SET_PEER_CTX(peer), 0);
 			if (ret) {
 				debug(RDB_PEER, "%s: sending del to %s failed with %s",
@@ -135,8 +138,19 @@ disconnect_peers(ccir_globals_t *globals)
 							CCIR_PEER_HDR_TYPE(h->generic.type);
 
 						if (t == CCIR_PEER_MSG_DEL) {
+							uint32_t *id = (uint32_t*)hdr->del.data;
+
 							waiting--;
 							cci_disconnect(c);
+							if (globals->verbose) {
+								debug(RDB_PEER,
+									"%s: EP %p: "
+									"router %u "
+									"leaving",
+									__func__,
+									(void*)ep,
+									*id);
+							}
 						}
 					}
 					break;
@@ -670,6 +684,13 @@ static void
 handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr;
+	uint32_t *id = (uint32_t*)hdr->del.data;
+
+	if (globals->verbose)
+		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) leaving",  __func__,
+			(void*)ep, peer->uri, *id);
+
 	return;
 }
 
