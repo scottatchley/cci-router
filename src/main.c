@@ -78,16 +78,43 @@ out:
 }
 
 static void
+handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+			cci_event_t *event);
+
+static void
 disconnect_peers(ccir_globals_t *globals)
 {
-	int ret = 0, i = 0;
-	char buf[8];		/* FIXME magic number - hdr + peer ID */
-	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t *)buf;
-	uint32_t *id = (uint32_t *)&(hdr->del.data);
+	int ret = 0, i = 0, len = 0;
+	char *buf = NULL;
+	ccir_peer_hdr_t *hdr = NULL;
+	ccir_del_data_t *del = NULL;
+	uint32_t *id = NULL;
 
-	memset(hdr, 0, sizeof(*hdr));
+	len = sizeof(hdr->del_size) +
+		sizeof(del->data_size) +
+		(globals->ep_cnt * sizeof(uint32_t));
+
+	buf = calloc(1, len);
+	if (!buf) {
+		/* TODO */
+		assert(buf);
+	}
+
+	hdr = (ccir_peer_hdr_t *)buf;
+	del = (ccir_del_data_t *)hdr->del.data;
+	id = (uint32_t*)&(del->data.router);
+
 	ccir_pack_del(hdr, 1, (uint8_t)globals->ep_cnt);
 	*id = globals->id;
+
+	debug(RDB_PEER, "%s: preparing DEL msg for router 0x%x with %u endpoints",
+		__func__, *id, globals->ep_cnt);
+
+	for (i = 0; i < (int) globals->ep_cnt; i++) {
+		del->data.subnet[i] = globals->eps[i]->subnet;
+		debug(RDB_PEER, "%s: deleting subnet %u (0x%x)", __func__,
+			del->data.subnet[i], del->data.subnet[i]);
+	}
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
 		int j = 0, waiting = 0;
@@ -99,7 +126,7 @@ disconnect_peers(ccir_globals_t *globals)
 			ccir_peer_t *peer = ep->peers[j];
 			cci_connection_t *c = peer->c;
 
-			ret = cci_send(c, buf, sizeof(buf),
+			ret = cci_send(c, buf, len,
 					CCIR_SET_PEER_CTX(peer), 0);
 			if (ret) {
 				debug(RDB_PEER, "%s: sending del to %s failed with %s",
@@ -138,7 +165,12 @@ disconnect_peers(ccir_globals_t *globals)
 							CCIR_PEER_HDR_TYPE(h->generic.type);
 
 						if (t == CCIR_PEER_MSG_DEL) {
+							void *ctx = CCIR_CTX(c->context);
+							ccir_peer_t *peer = (ccir_peer_t*)ctx;
 							uint32_t *id = (uint32_t*)hdr->del.data;
+
+							handle_peer_recv_del(globals, ep,
+									peer, event);
 
 							waiting--;
 							cci_disconnect(c);
@@ -383,6 +415,12 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	if (!rir->rec.rate) rir->rec.rate = 1;
 	rir->rec.len = ulen;
 
+	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
+			__func__, (void*)ep, peer->uri, len,
+			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
+	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x %02x",
+			rir->rec.as, rir->rec.subnet, rir->rec.router,
+			rir->rec.instance, rir->rec.rate, rir->rec.caps, rir->rec.len);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
 		debug(RDB_PEER, "%s: send RIR to %s "
@@ -582,18 +620,18 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
 				__func__, (void*)ep, peer->uri);
-		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
+		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%08x)",
 				__func__, (void*)ep, rir->rec.as, rir->rec.as);
-		debug(RDB_PEER, "%s: EP %p:      subnet = %u",
-				__func__, (void*)ep, rir->rec.subnet);
-		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
+		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%08x)",
+				__func__, (void*)ep, rir->rec.subnet, rir->rec.subnet);
+		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%08x)",
 				__func__, (void*)ep, rir->rec.router, rir->rec.router);
-		debug(RDB_PEER, "%s: EP %p:      instance = %u (0x%x)",
+		debug(RDB_PEER, "%s: EP %p:      instance = %u (0x%08x)",
 				__func__, (void*)ep, rir->rec.instance, rir->rec.instance);
-		debug(RDB_PEER, "%s: EP %p:      rate   = %hu",
-				__func__, (void*)ep, rir->rec.rate);
-		debug(RDB_PEER, "%s: EP %p:      len    = %hu",
-				__func__, (void*)ep, rir->rec.len);
+		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%04x)",
+				__func__, (void*)ep, rir->rec.rate, rir->rec.rate);
+		debug(RDB_PEER, "%s: EP %p:      len    = %hu (0x%02x)",
+				__func__, (void*)ep, rir->rec.len, rir->rec.len);
 	}
 
 	node = tfind(&rir->rec.router, &(globals->topo->routers), compare_u32);
@@ -629,10 +667,11 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			/* TODO */
 			assert(0);
 		}
-
-		if (globals->verbose)
-			twalk(globals->topo->routers, print_router_tree);
 	}
+
+	if (globals->verbose)
+		twalk(globals->topo->routers, print_router_tree);
+
 	/* TODO: check for subnet id in router->subnets
 	 * if not found, add it */
 
@@ -685,13 +724,23 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr;
+	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
 	uint32_t *id = (uint32_t*)hdr->del.data;
 	void *node = NULL;
 	ccir_router_t *router = NULL;
 
-	if (globals->verbose)
-		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) leaving",  __func__,
-			(void*)ep, peer->uri, *id);
+	assert(*id = del->data.router);
+
+	if (globals->verbose) {
+		int i = 0;
+
+		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) with %u "
+			"endpoints leaving",  __func__, (void*)ep,
+			peer->uri, *id, hdr->del.count);
+		for (i = 0; i < hdr->del.count; i++)
+			debug(RDB_PEER, "%s: EP %p: peer %s deleting subnet 0x%x",
+				__func__, (void*)ep, peer->uri, del->data.subnet[i]);
+	}
 
 	node = tfind(id, &(globals->topo->routers), compare_u32);
 	if (node) {
@@ -714,6 +763,14 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 				assert(router->count);
 			}
 			router->count--;
+			if (router->count == 0) {
+				debug(RDB_PEER, "%s: EP %p: freeing router 0x%x",
+					__func__, (void*)ep, router->id);
+				tdelete(router_id, &(globals->topo->routers), compare_u32);
+				free(router);
+				if (globals->verbose)
+					twalk(globals->topo->routers, print_router_tree);
+			}
 		}
 	} else {
 		debug(RDB_PEER, "%s: EP %p: unable to find router 0x%x", __func__,
@@ -730,10 +787,11 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	const ccir_peer_hdr_t *hdr = (void*)event->recv.ptr;
 
-	debug(RDB_PEER, "%s: EP %p: recv'd %s msg %d bytes", __func__,
-			(void*)ep,
+	debug(RDB_PEER, "%s: EP %p: recv'd %s msg %d bytes (header 0x%02x%02x%02x%02x)",
+			__func__, (void*)ep,
 			ccir_peer_hdr_str(CCIR_PEER_HDR_TYPE(hdr->generic.type)),
-			event->recv.len);
+			event->recv.len, hdr->generic.a[0], hdr->generic.a[1],
+			hdr->generic.a[2], hdr->generic.a[3]);
 
 	switch (CCIR_PEER_HDR_TYPE(hdr->generic.type)) {
 		case CCIR_PEER_MSG_RIR:
@@ -743,8 +801,9 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			handle_peer_recv_del(globals, ep, peer, event);
 			break;
 		default:
-			debug(RDB_PEER, "%s: EP %p: unknown message type from "
+			debug(RDB_PEER, "%s: EP %p: unknown message type %d from "
 					"%s with %d bytes", __func__, (void*)ep,
+					CCIR_PEER_HDR_TYPE(hdr->generic.type),
 					peer->uri, event->recv.len);
 			break;
 	}

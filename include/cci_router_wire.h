@@ -153,6 +153,22 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 	return;
 }
 
+typedef union ccir_del_data {
+	/* Generic DEL payload format (without subnet pointer) */
+	/* Use this struct when determining the length of the payload */
+	struct del_data_size {
+		uint32_t router;	/* Router id */
+		/* 32b */
+	} data_size;
+
+	/* DEL payload format */
+	struct del_data {
+		uint32_t router;	/* Router id */
+		/* 32b */
+		uint32_t subnet[1];	/* Subnet list */
+	} data;
+} ccir_del_data_t;
+
 static inline void
 ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye, uint8_t count)
 {
