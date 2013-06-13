@@ -389,38 +389,30 @@ handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *even
 static void
 send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 {
-	char buf[256 + 24]; /* FIXME Magic number URI + headers */
-	int len = 0, ulen = 0, pad = 0, ret = 0;
+	char buf[24]; /* FIXME Magic number */
+	int len = 0, ret = 0;
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t *)buf;
 	ccir_rir_data_t *rir = (ccir_rir_data_t *)hdr->rir.data;
 
-	len = sizeof(hdr->rir_size) + sizeof(rir->rec_size);
-	ulen = strlen(ep->uri);
-	len += ulen;
-
-	pad = ulen & 0x3;
-	if (pad)
-		len += 4 - pad;
+	len = sizeof(hdr->rir_size) + sizeof(*rir);
 
 	assert(len < (int) peer->c->max_send_size);
 	assert(len < (int) sizeof(buf));
 
 	memset(buf, 0, sizeof(buf));
 	ccir_pack_rir(hdr);
-	rir->rec.as = ep->as;
-	rir->rec.subnet = ep->subnet;
-	rir->rec.router = globals->id;
-	rir->rec.instance = 0; /* FIXME */
-	rir->rec.rate = ep->e->device->rate / 1000000000;
-	if (!rir->rec.rate) rir->rec.rate = 1;
-	rir->rec.len = ulen;
+	rir->as = ep->as;
+	rir->subnet = ep->subnet;
+	rir->router = globals->id;
+	rir->instance = 0; /* FIXME */
+	rir->rate = ep->e->device->rate / 1000000000;
+	if (!rir->rate) rir->rate = 1;
 
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
-	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x %02x",
-			rir->rec.as, rir->rec.subnet, rir->rec.router,
-			rir->rec.instance, rir->rec.rate, rir->rec.caps, rir->rec.len);
+	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x", rir->as, rir->subnet,
+			rir->router, rir->instance, rir->rate, rir->caps);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
 		debug(RDB_PEER, "%s: send RIR to %s "
@@ -621,20 +613,18 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
 				__func__, (void*)ep, peer->uri);
 		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%08x)",
-				__func__, (void*)ep, rir->rec.as, rir->rec.as);
+				__func__, (void*)ep, rir->as, rir->as);
 		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%08x)",
-				__func__, (void*)ep, rir->rec.subnet, rir->rec.subnet);
+				__func__, (void*)ep, rir->subnet, rir->subnet);
 		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%08x)",
-				__func__, (void*)ep, rir->rec.router, rir->rec.router);
+				__func__, (void*)ep, rir->router, rir->router);
 		debug(RDB_PEER, "%s: EP %p:      instance = %u (0x%08x)",
-				__func__, (void*)ep, rir->rec.instance, rir->rec.instance);
+				__func__, (void*)ep, rir->instance, rir->instance);
 		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%04x)",
-				__func__, (void*)ep, rir->rec.rate, rir->rec.rate);
-		debug(RDB_PEER, "%s: EP %p:      len    = %hu (0x%02x)",
-				__func__, (void*)ep, rir->rec.len, rir->rec.len);
+				__func__, (void*)ep, rir->rate, rir->rate);
 	}
 
-	node = tfind(&rir->rec.router, &(globals->topo->routers), compare_u32);
+	node = tfind(&rir->router, &(globals->topo->routers), compare_u32);
 	if (node) {
 		uint32_t *id = *((uint32_t**)node);
 		router = container_of(id, ccir_router_t, id);
@@ -653,8 +643,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			/* TODO */
 			assert(0);
 		}
-		router->id = rir->rec.router;
-		router->instance = rir->rec.instance;
+		router->id = rir->router;
+		router->instance = rir->instance;
 		router->count = 1;
 
 		if (globals->verbose) {
@@ -675,7 +665,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	/* TODO: check for subnet id in router->subnets
 	 * if not found, add it */
 
-	node = tfind(&rir->rec.subnet, &(globals->topo->subnets), compare_u32);
+	node = tfind(&rir->subnet, &(globals->topo->subnets), compare_u32);
 	if (node) {
 		uint32_t *id = *((uint32_t**)node);
 		subnet = container_of(id, ccir_subnet_t, id);
@@ -694,9 +684,9 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			/* TODO */
 			assert(0);
 		}
-		subnet->id = rir->rec.subnet;
+		subnet->id = rir->subnet;
 		subnet->count = 1;
-		subnet->rate = rir->rec.rate;
+		subnet->rate = rir->rate;
 
 		if (globals->verbose) {
 			debug(RDB_PEER, "%s: EP %p: adding subnet %u",
