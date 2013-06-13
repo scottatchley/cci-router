@@ -116,6 +116,7 @@ typedef struct ccir_subnet {
 } ccir_subnet_t;
 
 typedef struct ccir_topo {
+	pthread_rwlock_t lock;	/* Read/write lock */
 	void *subnets;		/* tree of subnets sorted on subnet ID */
 	void *routers;		/* tree of known routers sorted on router->id */
 	void *routes;		/* tree of routes originating locally */

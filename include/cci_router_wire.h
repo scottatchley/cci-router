@@ -9,22 +9,6 @@
 
 #define CCIR_VERSION (1)
 
-/* RIR payload format */
-typedef struct ccir_rir_data {
-	uint32_t as;		/* Autonomous System id */
-	/* 32b */
-	uint32_t subnet;	/* Subnet id */
-	/* 64b */
-	uint32_t router;	/* Router id */
-	/* 96b */
-	uint32_t instance;	/* Random cookie to define instance */
-	/* 128b */
-	uint16_t rate;		/* Gb/s */
-	uint8_t caps;		/* Subnet capabilities */
-	uint8_t pad;		/* Reserved */
-	/* 160b */
-} ccir_rir_data_t;
-
 typedef union ccir_peer_hdr {
 	/* Generic header type, used by all messages */
 	struct ccir_peer_hdr_generic {
@@ -130,6 +114,29 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 	return;
 }
 
+/* RIR payload format */
+typedef struct ccir_rir_data {
+	uint32_t as;		/* Autonomous System id */
+	/* 32b */
+	uint32_t subnet;	/* Subnet id */
+	/* 64b */
+	uint32_t router;	/* Router id */
+	/* 96b */
+	uint32_t instance;	/* Random cookie to define instance */
+	/* 128b */
+	uint16_t rate;		/* Gb/s */
+	uint8_t caps;		/* Subnet capabilities */
+	uint8_t pad;		/* Reserved */
+	/* 160b */
+} ccir_rir_data_t;
+
+static inline void
+ccir_pack_rir(ccir_peer_hdr_t *hdr)
+{
+	hdr->rir.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RIR);
+	hdr->rir.count = 1;
+}
+
 typedef union ccir_del_data {
 	/* Generic DEL payload format (without subnet pointer) */
 	/* Use this struct when determining the length of the payload */
@@ -153,11 +160,4 @@ ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye, uint8_t count)
 	hdr->del.bye = bye;
 	hdr->del.count = count;
 	return;
-}
-
-static inline void
-ccir_pack_rir(ccir_peer_hdr_t *hdr)
-{
-	hdr->rir.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RIR);
-	hdr->rir.count = 1;
 }
