@@ -397,7 +397,7 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	len = sizeof(hdr->rir_size) + sizeof(*rir);
 
 	assert(len < (int) peer->c->max_send_size);
-	assert(len < (int) sizeof(buf));
+	assert(len == (int) sizeof(buf));
 
 	memset(buf, 0, sizeof(buf));
 	ccir_pack_rir(hdr);
@@ -715,11 +715,9 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr;
 	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
-	uint32_t *id = (uint32_t*)hdr->del.data;
+	uint32_t *id = (uint32_t*)&(del->data.router);
 	void *node = NULL;
 	ccir_router_t *router = NULL;
-
-	assert(*id = del->data.router);
 
 	if (globals->verbose) {
 		int i = 0;

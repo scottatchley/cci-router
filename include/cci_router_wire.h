@@ -42,7 +42,8 @@ typedef union ccir_peer_hdr {
 	struct ccir_peer_hdr_del_size {
 		uint8_t type;		/* CCIR_PEER_MSG_DEL */
 		uint8_t bye;		/* Set if closing connection */
-		uint8_t a[2];		/* Pad */
+		uint8_t count;		/* Number of endpoints */
+		uint8_t a;		/* Pad */
 		/* 32b */
 	} del_size;
 
