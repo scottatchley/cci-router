@@ -88,7 +88,6 @@ disconnect_peers(ccir_globals_t *globals)
 	char *buf = NULL;
 	ccir_peer_hdr_t *hdr = NULL;
 	ccir_del_data_t *del = NULL;
-	uint32_t *id = NULL;
 
 	len = sizeof(hdr->del_size) +
 		sizeof(del->data_size) +
@@ -102,18 +101,17 @@ disconnect_peers(ccir_globals_t *globals)
 
 	hdr = (ccir_peer_hdr_t *)buf;
 	del = (ccir_del_data_t *)hdr->del.data;
-	id = (uint32_t*)&(del->data.router);
 
 	ccir_pack_del(hdr, 1, (uint8_t)globals->ep_cnt);
-	*id = globals->id;
+	del->data.router = htonl(globals->id);
 
 	debug(RDB_PEER, "%s: preparing DEL msg for router 0x%x with %u endpoints",
-		__func__, *id, globals->ep_cnt);
+		__func__, globals->id, globals->ep_cnt);
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
-		del->data.subnet[i] = globals->eps[i]->subnet;
+		del->data.subnet[i] = htonl(globals->eps[i]->subnet);
 		debug(RDB_PEER, "%s: deleting subnet %u (0x%x)", __func__,
-			del->data.subnet[i], del->data.subnet[i]);
+			globals->eps[i]->subnet, globals->eps[i]->subnet);
 	}
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
@@ -159,6 +157,7 @@ disconnect_peers(ccir_globals_t *globals)
 				case CCI_EVENT_RECV:
 					c = event->recv.connection;
 					h = (void*) event->recv.ptr;
+					h->net = ntohl(h->net);
 					is_peer = CCIR_IS_PEER_HDR(h->generic.type);
 					if (is_peer) {
 						ccir_peer_hdr_type_t t =
@@ -181,7 +180,7 @@ disconnect_peers(ccir_globals_t *globals)
 									"leaving",
 									__func__,
 									(void*)ep,
-									*id);
+									ntohl(*id));
 							}
 						}
 					}
@@ -274,7 +273,7 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 	int ret = 0, found = 0;
 	uint32_t i = 0;
 	char uri[256];
-	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
+	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr; /* already host order */
 
 	memset(uri, 0, 256);
 	memcpy(uri, hdr->connect.data, hdr->connect.len);
@@ -374,8 +373,12 @@ out:
 static void
 handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	const ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
-	int is_peer = CCIR_IS_PEER_HDR(hdr->connect.type);
+	ccir_peer_hdr_t *hdr = (void*)event->request.data_ptr;
+	int is_peer = 0;
+
+	hdr->net = ntohl(hdr->net);
+
+	is_peer = CCIR_IS_PEER_HDR(hdr->connect.type);
 
 	if (is_peer) {
 		handle_peer_connect_request(globals, ep, event);
@@ -401,18 +404,20 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 
 	memset(buf, 0, sizeof(buf));
 	ccir_pack_rir(hdr);
-	rir->as = ep->as;
-	rir->subnet = ep->subnet;
-	rir->router = globals->id;
+	rir->as = htonl(ep->as);
+	rir->subnet = htonl(ep->subnet);
+	rir->router = htonl(globals->id);
 	rir->instance = 0; /* FIXME */
-	rir->rate = ep->e->device->rate / 1000000000;
-	if (!rir->rate) rir->rate = 1;
+	rir->rate = htons(ep->e->device->rate / 1000000000);
+	if (!rir->rate) rir->rate = htons(1);
 
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
-	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x", rir->as, rir->subnet,
-			rir->router, rir->instance, rir->rate, rir->caps);
+	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x",
+			ntohl(rir->as), ntohl(rir->subnet),
+			ntohl(rir->router), ntohl(rir->instance),
+			ntohs(rir->rate), rir->caps);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
 		debug(RDB_PEER, "%s: send RIR to %s "
@@ -603,11 +608,17 @@ static void
 handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
-	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr;
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
 	ccir_router_t *router = NULL;
 	ccir_subnet_t *subnet = NULL;
 	void *node = NULL;
+
+	rir->as = ntohl(rir->as);
+	rir->subnet = ntohl(rir->subnet);
+	rir->router = ntohl(rir->router);
+	rir->instance = ntohl(rir->instance);
+	rir->rate = ntohs(rir->rate);
 
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
@@ -713,24 +724,26 @@ static void
 handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
-	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr;
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr; /* in host order */
 	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
-	uint32_t *id = (uint32_t*)&(del->data.router);
 	void *node = NULL;
 	ccir_router_t *router = NULL;
+
+	del->data.router = ntohl(del->data.router);
 
 	if (globals->verbose) {
 		int i = 0;
 
 		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) with %u "
 			"endpoints leaving",  __func__, (void*)ep,
-			peer->uri, *id, hdr->del.count);
+			peer->uri, del->data.router, hdr->del.count);
 		for (i = 0; i < hdr->del.count; i++)
 			debug(RDB_PEER, "%s: EP %p: peer %s deleting subnet 0x%x",
-				__func__, (void*)ep, peer->uri, del->data.subnet[i]);
+				__func__, (void*)ep, peer->uri,
+				ntohl(del->data.subnet[i]));
 	}
 
-	node = tfind(id, &(globals->topo->routers), compare_u32);
+	node = tfind(&(del->data.router), &(globals->topo->routers), compare_u32);
 	if (node) {
 		uint8_t i = 0, count = hdr->del.count;
 		uint32_t *router_id = *((uint32_t**)node);
@@ -762,7 +775,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		}
 	} else {
 		debug(RDB_PEER, "%s: EP %p: unable to find router 0x%x", __func__,
-				(void*)ep, *id);
+				(void*)ep, del->data.router);
 	}
 
 
@@ -773,7 +786,9 @@ static void
 handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
-	const ccir_peer_hdr_t *hdr = (void*)event->recv.ptr;
+	ccir_peer_hdr_t *hdr = (void*)event->recv.ptr; /* in net order */
+
+	hdr->net = ntohl(hdr->net);
 
 	debug(RDB_PEER, "%s: EP %p: recv'd %s msg %d bytes (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep,
@@ -806,7 +821,9 @@ static void
 handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	cci_connection_t *connection = event->recv.connection;
-	int is_peer = CCIR_IS_PEER_CTX(connection->context);
+	int is_peer = 0;
+
+	is_peer = CCIR_IS_PEER_CTX(connection->context);
 
 	if (is_peer) {
 		void *ctx = CCIR_CTX(connection->context);

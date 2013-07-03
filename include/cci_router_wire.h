@@ -7,6 +7,8 @@
  *
  */
 
+#include <arpa/inet.h>
+
 #define CCIR_VERSION (1)
 
 typedef union ccir_peer_hdr {
@@ -74,6 +76,9 @@ typedef union ccir_peer_hdr {
 		/* 32b */
 		char data[1];		/* RIR data payload */
 	} rir;
+
+	/* For easy byte swapping to/from network order */
+	uint32_t net;
 } ccir_peer_hdr_t;
 
 #define CCIR_PEER_BIT_SHIFT	(3)
@@ -108,10 +113,13 @@ ccir_peer_hdr_str(ccir_peer_hdr_type_t type)
 static inline void
 ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 {
+	assert(strlen(uri) < 256); /* must fit in uint8_t */
+
 	hdr->connect.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_CONNECT);
 	hdr->connect.version = CCIR_VERSION;
 	hdr->connect.len = (uint8_t) strlen(uri);
 	memcpy(hdr->connect.data, uri, hdr->connect.len);
+	hdr->net = htonl(hdr->net);
 	return;
 }
 
@@ -136,6 +144,7 @@ ccir_pack_rir(ccir_peer_hdr_t *hdr)
 {
 	hdr->rir.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RIR);
 	hdr->rir.count = 1;
+	hdr->net = htonl(hdr->net);
 }
 
 typedef union ccir_del_data {
@@ -160,5 +169,6 @@ ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye, uint8_t count)
 	hdr->del.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_DEL);
 	hdr->del.bye = bye;
 	hdr->del.count = count;
+	hdr->net = htonl(hdr->net);
 	return;
 }
