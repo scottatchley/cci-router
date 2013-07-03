@@ -102,7 +102,6 @@ typedef struct ccir_ep {
 } ccir_ep_t;
 
 typedef struct ccir_router {
-	void *subnets;		/* Tree of subnet IDs routed by this router */
 	uint32_t id;		/* Router's ID */
 	uint32_t instance;	/* Router's instance */
 	uint32_t count;		/* Number of subnets served */
@@ -118,7 +117,6 @@ typedef struct ccir_subnet {
 typedef struct ccir_topo {
 	pthread_rwlock_t lock;	/* Read/write lock */
 	void *subnets;		/* tree of subnets sorted on subnet ID */
-	void *routers;		/* tree of known routers sorted on router->id */
 	void *routes;		/* tree of routes originating locally */
 } ccir_topo_t;
 

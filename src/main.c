@@ -570,13 +570,13 @@ print_router_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		fprintf(stderr, "router id %u instance %u count %u\n", router->id,
+		fprintf(stderr, "router id 0x%x instance %u count %u\n", router->id,
 				router->instance, router->count);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		fprintf(stderr, "router id %u instance %u count %u\n", router->id,
+		fprintf(stderr, "router id 0x%x instance %u count %u\n", router->id,
 				router->instance, router->count);
 		break;
 	}
@@ -592,16 +592,73 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		fprintf(stderr, "subnet id %u rate %hu count %u\n", subnet->id,
+		fprintf(stderr, "subnet id 0x%x rate %hu count %u\n", subnet->id,
 				subnet->rate, subnet->count);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		fprintf(stderr, "subnet id %u rate %hu count %u\n", subnet->id,
+		fprintf(stderr, "subnet id 0x%x rate %hu count %u\n", subnet->id,
 				subnet->rate, subnet->count);
 		break;
 	}
+}
+
+static int
+add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
+		ccir_rir_data_t *rir)
+{
+	int ret = 0;
+	void *node = NULL;
+	uint32_t *id = &(rir->router);
+	ccir_router_t *router = NULL;
+
+	node = tfind(id, &(subnet->routers), compare_u32);
+	if (node) {
+		id = *((uint32_t**)node);
+		router = container_of(id, ccir_router_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding ref to router 0x%x "
+				"(count was %u)", __func__, (void*)ep,
+				router->id, router->count);
+		}
+
+		if (router->instance == rir->instance) {
+			router->count++;
+		} else {
+			/* TODO */
+			assert(0);
+		}
+	} else {
+		int empty = subnet->routers == NULL;
+
+		router = calloc(1, sizeof(*router));
+		if (!router) {
+			/* TODO */
+			assert(router);
+			ret = ENOMEM;
+		}
+		router->id = rir->router;
+		router->instance = rir->instance;
+		router->count = 1;
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding router 0x%x",
+				__func__, (void*)ep, router->id);
+		}
+
+		node = tsearch(&router->id, &(subnet->routers), compare_u32);
+		if (!node && !empty) {
+			/* TODO */
+			assert(0);
+		}
+	}
+
+	if (globals->verbose)
+		twalk(subnet->routers, print_router_tree);
+
+	return ret;
 }
 
 static void
@@ -610,7 +667,6 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
-	ccir_router_t *router = NULL;
 	ccir_subnet_t *subnet = NULL;
 	void *node = NULL;
 
@@ -634,47 +690,6 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%04x)",
 				__func__, (void*)ep, rir->rate, rir->rate);
 	}
-
-	node = tfind(&rir->router, &(globals->topo->routers), compare_u32);
-	if (node) {
-		uint32_t *id = *((uint32_t**)node);
-		router = container_of(id, ccir_router_t, id);
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding ref to router 0x%x "
-				"(count was %u)", __func__, (void*)ep,
-				router->id, router->count);
-		}
-		router->count++;
-	} else {
-		int empty = globals->topo->routers == NULL;
-
-		router = calloc(1, sizeof(*router));
-		if (!router) {
-			/* TODO */
-			assert(0);
-		}
-		router->id = rir->router;
-		router->instance = rir->instance;
-		router->count = 1;
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding router 0x%x",
-				__func__, (void*)ep, router->id);
-		}
-
-		node = tsearch(&router->id, &(globals->topo->routers), compare_u32);
-		if (!node && !empty) {
-			/* TODO */
-			assert(0);
-		}
-	}
-
-	if (globals->verbose)
-		twalk(globals->topo->routers, print_router_tree);
-
-	/* TODO: check for subnet id in router->subnets
-	 * if not found, add it */
 
 	node = tfind(&rir->subnet, &(globals->topo->subnets), compare_u32);
 	if (node) {
@@ -714,8 +729,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			twalk(globals->topo->subnets, print_subnet_tree);
 	}
 
-	/* TODO: check for router id in subnet->routers
-	 * if not found, add it */
+
+	add_router_to_subnet(globals, ep, subnet, rir);
 
 	return;
 }
@@ -726,8 +741,6 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr; /* in host order */
 	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
-	void *node = NULL;
-	ccir_router_t *router = NULL;
 
 	del->data.router = ntohl(del->data.router);
 
@@ -743,41 +756,8 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 				ntohl(del->data.subnet[i]));
 	}
 
-	node = tfind(&(del->data.router), &(globals->topo->routers), compare_u32);
-	if (node) {
-		uint8_t i = 0, count = hdr->del.count;
-		uint32_t *router_id = *((uint32_t**)node);
 
-		router = container_of(router_id, ccir_router_t, id);
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: removing %d ref%s from router 0x%x "
-				"(count was %u)", __func__, (void*)ep,
-				count, count == 1 ? "" : "s",
-				router->id, router->count);
-		}
-		for (i = 0; i < count; i++) {
-			if (router->count == 0) {
-				debug(RDB_ALL, "%s: EP %p: decrementing router 0x%x "
-						"with count 0", __func__, (void*)ep,
-						router->id);
-				assert(router->count);
-			}
-			router->count--;
-			if (router->count == 0) {
-				debug(RDB_PEER, "%s: EP %p: freeing router 0x%x",
-					__func__, (void*)ep, router->id);
-				tdelete(router_id, &(globals->topo->routers), compare_u32);
-				free(router);
-				if (globals->verbose)
-					twalk(globals->topo->routers, print_router_tree);
-			}
-		}
-	} else {
-		debug(RDB_PEER, "%s: EP %p: unable to find router 0x%x", __func__,
-				(void*)ep, del->data.router);
-	}
-
+	/* find subnets, if find router, remove router && decref subnet */
 
 	return;
 }
