@@ -127,6 +127,7 @@ typedef struct ccir_globals {
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
 	uint32_t id;		/* our id from hashed ep->uris */
+	uint32_t instance;	/* our instance */
 	uint32_t verbose;	/* Level of verbose output */
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;

@@ -153,12 +153,16 @@ typedef union ccir_del_data {
 	struct del_data_size {
 		uint32_t router;	/* Router id */
 		/* 32b */
+		uint32_t instance;	/* Router instance */
+		/* 64b */
 	} data_size;
 
 	/* DEL payload format */
 	struct del_data {
 		uint32_t router;	/* Router id */
 		/* 32b */
+		uint32_t instance;	/* Router instance */
+		/* 64b */
 		uint32_t subnet[1];	/* Subnet list */
 	} data;
 } ccir_del_data_t;

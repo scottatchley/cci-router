@@ -104,6 +104,7 @@ disconnect_peers(ccir_globals_t *globals)
 
 	ccir_pack_del(hdr, 1, (uint8_t)globals->ep_cnt);
 	del->data.router = htonl(globals->id);
+	del->data.instance = htonl(globals->instance);
 
 	debug(RDB_PEER, "%s: preparing DEL msg for router 0x%x with %u endpoints",
 		__func__, globals->id, globals->ep_cnt);
@@ -661,6 +662,49 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 	return ret;
 }
 
+static int
+delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
+		uint32_t router_id, uint32_t instance)
+{
+	int ret = 0;
+	void *node = NULL;
+	uint32_t *id = &router_id;
+	ccir_router_t *router = NULL;
+
+	node = tfind(id, &(subnet->routers), compare_u32);
+	if (node) {
+		id = *((uint32_t**)node);
+		router = container_of(id, ccir_router_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: deleting ref to router 0x%x "
+				"(count was %u)", __func__, (void*)ep,
+				router->id, router->count);
+		}
+
+		if (router->instance == instance) {
+			router->count--;
+			if (router->count == 0) {
+				tfind(&router_id, &(subnet->routers), compare_u32);
+				debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
+					__func__, (void*)ep, router_id);
+			}
+		} else {
+			/* TODO */
+			assert(0);
+		}
+	} else {
+		debug(RDB_PEER, "%s: EP %p: DEL msg for subnet 0x%x router 0x%x "
+			"and no matching router found", __func__, (void*)ep,
+			subnet->id, router_id);
+	}
+
+	if (globals->verbose)
+		twalk(subnet->routers, print_router_tree);
+
+	return ret;
+}
+
 static void
 handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
@@ -741,23 +785,53 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 {
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr; /* in host order */
 	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
+	ccir_subnet_t *subnet = NULL;
+	void *node = NULL;
+	int i = 0;
 
 	del->data.router = ntohl(del->data.router);
+	del->data.instance = ntohl(del->data.instance);
 
 	if (globals->verbose) {
-		int i = 0;
-
 		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) with %u "
 			"endpoints leaving",  __func__, (void*)ep,
 			peer->uri, del->data.router, hdr->del.count);
 		for (i = 0; i < hdr->del.count; i++)
 			debug(RDB_PEER, "%s: EP %p: peer %s deleting subnet 0x%x",
-				__func__, (void*)ep, peer->uri,
-				ntohl(del->data.subnet[i]));
+				__func__, (void*)ep, peer->uri, ntohl(del->data.subnet[i]));
 	}
 
-
 	/* find subnets, if find router, remove router && decref subnet */
+	for (i = 0; i < hdr->del.count; i++) {
+		uint32_t subnet_id = 0;
+
+		subnet_id = ntohl(del->data.subnet[i]);
+
+		node = tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
+		if (node) {
+			uint32_t *id = *((uint32_t**)node);
+			subnet = container_of(id, ccir_subnet_t, id);
+
+			delete_router_from_subnet(globals, ep, subnet, del->data.router,
+				del->data.instance);
+
+			if (globals->verbose) {
+				debug(RDB_PEER, "%s: EP %p: decref subnet %u "
+					"(count was %u)", __func__, (void*)ep,
+					subnet->id, subnet->count);
+			}
+			subnet->count--;
+			if (subnet->count == 0) {
+				tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
+				debug(RDB_PEER, "%s: EP %p: deleted subnet id 0x%x",
+					__func__, (void*)ep, subnet_id);
+			}
+		} else {
+			debug(RDB_PEER, "%s: EP %p: DEL msg for subnet 0x%x router 0x%x "
+				"and no matching subnet found", __func__, (void*)ep,
+				subnet_id, del->data.router);
+		}
+	}
 
 	return;
 }
