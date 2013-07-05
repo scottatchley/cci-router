@@ -9,6 +9,37 @@
 
 #include <arpa/inet.h>
 
+#define U32_HI 0
+#define U32_LO 1
+
+static inline uint64_t
+ccir_htonll(uint64_t in)
+{
+	union {
+		uint64_t u64;
+		uint32_t u32[2];
+	} out;
+
+	out.u32[U32_HI] = htonl((uint32_t)(in >> 32));
+	out.u32[U32_LO] = htonl((uint32_t)(in & 0xFFFFFFFF));
+
+	return out.u64;
+}
+
+static inline uint64_t
+ccir_ntohll(uint64_t in)
+{
+	union {
+		uint64_t u64;
+		uint32_t u32[2];
+	} out;
+
+	out.u32[U32_HI] = ntohl((uint32_t)(in >> 32));
+	out.u32[U32_LO] = ntohl((uint32_t)(in & 0xFFFFFFFF));
+
+	return out.u64;
+}
+
 #define CCIR_VERSION (1)
 
 typedef union ccir_peer_hdr {
@@ -125,13 +156,13 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 
 /* RIR payload format */
 typedef struct ccir_rir_data {
-	uint32_t as;		/* Autonomous System id */
-	/* 32b */
-	uint32_t subnet;	/* Subnet id */
-	/* 64b */
-	uint32_t router;	/* Router id */
-	/* 96b */
 	uint64_t instance;	/* Seconds since epoch */
+	/* 64b */
+	uint32_t as;		/* Autonomous System id */
+	/* 96b */
+	uint32_t subnet;	/* Subnet id */
+	/* 128b */
+	uint32_t router;	/* Router id */
 	/* 160b */
 	uint16_t rate;		/* Gb/s */
 	uint8_t caps;		/* Subnet capabilities */
@@ -147,24 +178,14 @@ ccir_pack_rir(ccir_peer_hdr_t *hdr)
 	hdr->net = htonl(hdr->net);
 }
 
-typedef union ccir_del_data {
-	/* Generic DEL payload format (without subnet pointer) */
-	/* Use this struct when determining the length of the payload */
-	struct del_data_size {
-		uint32_t router;	/* Router id */
-		/* 32b */
-		uint32_t instance;	/* Router instance */
-		/* 64b */
-	} data_size;
-
+typedef struct ccir_del_data {
 	/* DEL payload format */
-	struct del_data {
-		uint32_t router;	/* Router id */
-		/* 32b */
-		uint32_t instance;	/* Router instance */
-		/* 64b */
-		uint32_t subnet[1];	/* Subnet list */
-	} data;
+	/* already includes one subnet, we can allocate (N-1) * sizeof(subnet) */
+	uint64_t instance;	/* Router instance */
+	/* 64b */
+	uint32_t router;	/* Router id */
+	/* 96b */
+	uint32_t subnet[1];	/* Subnet list */
 } ccir_del_data_t;
 
 static inline void

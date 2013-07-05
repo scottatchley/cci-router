@@ -91,9 +91,11 @@ disconnect_peers(ccir_globals_t *globals)
 	ccir_peer_hdr_t *hdr = NULL;
 	ccir_del_data_t *del = NULL;
 
+	/* the sizeof(*del) includes one uint32_t subnet already so we
+	 * only need to add ep_cnt - 1 more */
 	len = sizeof(hdr->del_size) +
-		sizeof(del->data_size) +
-		(globals->ep_cnt * sizeof(uint32_t));
+		sizeof(*del) +
+		((globals->ep_cnt - 1) * sizeof(uint32_t));
 
 	buf = calloc(1, len);
 	if (!buf) {
@@ -105,14 +107,14 @@ disconnect_peers(ccir_globals_t *globals)
 	del = (ccir_del_data_t *)hdr->del.data;
 
 	ccir_pack_del(hdr, 1, (uint8_t)globals->ep_cnt);
-	del->data.router = htonl(globals->id);
-	del->data.instance = htonl(globals->instance);
+	del->instance = ccir_htonll(globals->instance);
+	del->router = htonl(globals->id);
 
 	debug(RDB_PEER, "%s: preparing DEL msg for router 0x%x with %u endpoints",
 		__func__, globals->id, globals->ep_cnt);
 
 	for (i = 0; i < (int) globals->ep_cnt; i++) {
-		del->data.subnet[i] = htonl(globals->eps[i]->subnet);
+		del->subnet[i] = htonl(globals->eps[i]->subnet);
 		debug(RDB_PEER, "%s: deleting subnet %u (0x%x)", __func__,
 			globals->eps[i]->subnet, globals->eps[i]->subnet);
 	}
@@ -224,13 +226,15 @@ connect_peers(ccir_globals_t *globals)
 			continue;
 
 		for (p = ep->peers; *p; p++) {
-			char buffer[256];
 			ccir_peer_t *peer = *p;
-			ccir_peer_hdr_t *hdr = (void*)buffer;
+			ccir_peer_hdr_t *hdr = NULL;
+			char buffer[256 + sizeof(*hdr)];
 			uint32_t len = strlen(ep->uri);
 
 			if (peer->connecting)
 				continue;
+
+			hdr = (void*)buffer;
 
 			assert(len < 256); /* NOTE: magic number
 					      len must fit in a uint8_t */
@@ -248,7 +252,6 @@ connect_peers(ccir_globals_t *globals)
 			peer->attempts++;
 			peer->connecting++;
 
-			hdr = (void*)buffer;
 			ccir_pack_connect(hdr, ep->uri);
 
 			len += sizeof(hdr->connect_size);
@@ -416,10 +419,10 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 
 	memset(buf, 0, sizeof(buf));
 	ccir_pack_rir(hdr);
+	rir->instance = ccir_htonll(globals->instance);
 	rir->as = htonl(ep->as);
 	rir->subnet = htonl(ep->subnet);
 	rir->router = htonl(globals->id);
-	rir->instance = ccir_htonll(globals->instance);
 	rir->rate = htons(ep->e->device->rate / 1000000000);
 	if (!rir->rate) rir->rate = htons(1);
 
@@ -675,7 +678,7 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 
 static int
 delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
-		uint32_t router_id, uint32_t instance)
+		uint32_t router_id, uint64_t instance)
 {
 	int ret = 0;
 	void *node = NULL;
@@ -731,10 +734,10 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	ccir_subnet_t *subnet = NULL;
 	void *node = NULL;
 
+	rir->instance = ccir_ntohll(rir->instance);
 	rir->as = ntohl(rir->as);
 	rir->subnet = ntohl(rir->subnet);
 	rir->router = ntohl(rir->router);
-	rir->instance = ccir_ntohll(rir->instance);
 	rir->rate = ntohs(rir->rate);
 
 	if (globals->verbose) {
@@ -751,6 +754,9 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%x)",
 				__func__, (void*)ep, rir->rate, rir->rate);
 	}
+
+	if (peer->id == 0)
+		peer->id = rir->router;
 
 	node = tfind(&rir->subnet, &(globals->topo->subnets), compare_u32);
 	if (node) {
@@ -793,6 +799,36 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 
 	add_router_to_subnet(globals, ep, subnet, rir);
 
+	/* TODO forward to N-1 endpoints */
+	/* forward_rir(globals, ep, peer, event->recv.ptr, event->recv.len); */
+	/* for each peer P,
+	 *   if P->id != router
+	 *       send RIR
+	 */
+	hdr->net = htonl(hdr->net);
+	rir->instance = ccir_htonll(rir->instance);
+	rir->as = htonl(rir->as);
+	rir->subnet = htonl(rir->subnet);
+	rir->router = htonl(rir->router);
+	rir->rate = htons(rir->rate);
+
+	{
+		uint32_t i;
+
+		for (i = 0; i < globals->ep_cnt; i++) {
+			ccir_ep_t *e = globals->eps[i];
+			ccir_peer_t **p = NULL;
+
+			for (p = e->peers; *p; p++) {
+				if ((*p)->c && (*p)->id && (*p)->id != ntohl(rir->router)) {
+					debug(RDB_PEER, "%s: EP %p: forwarding RIR to %s",
+						__func__, (void*)p, (*p)->uri);
+					cci_send((*p)->c, event->recv.ptr, event->recv.len, NULL, CCI_FLAG_SILENT);
+				}
+			}
+		}
+	}
+
 	return;
 }
 
@@ -806,31 +842,31 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	int i = 0, bye = hdr->del.bye;
 	void *node = NULL;
 
-	del->data.router = ntohl(del->data.router);
-	del->data.instance = ntohl(del->data.instance);
+	del->instance = ccir_ntohll(del->instance);
+	del->router = ntohl(del->router);
 
 	if (globals->verbose) {
-		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) with %u "
-			"endpoints leaving",  __func__, (void*)ep,
-			peer->uri, del->data.router, hdr->del.count);
+		debug(RDB_PEER, "%s: EP %p: peer %s (router 0x%x) (instance %"PRIu64") "
+			"with %u endpoints leaving",  __func__, (void*)ep,
+			peer->uri, del->router, del->instance, hdr->del.count);
 		for (i = 0; i < hdr->del.count; i++)
 			debug(RDB_PEER, "%s: EP %p: peer %s deleting subnet 0x%x",
-				__func__, (void*)ep, peer->uri, ntohl(del->data.subnet[i]));
+				__func__, (void*)ep, peer->uri, ntohl(del->subnet[i]));
 	}
 
 	/* find subnets, if find router, remove router && decref subnet */
 	for (i = 0; i < hdr->del.count; i++) {
 		uint32_t subnet_id = 0;
 
-		subnet_id = ntohl(del->data.subnet[i]);
+		subnet_id = ntohl(del->subnet[i]);
 
 		node = tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
 		if (node) {
 			uint32_t *id = *((uint32_t**)node);
 			subnet = container_of(id, ccir_subnet_t, id);
 
-			delete_router_from_subnet(globals, ep, subnet, del->data.router,
-				del->data.instance);
+			delete_router_from_subnet(globals, ep, subnet, del->router,
+				del->instance);
 
 			if (globals->verbose) {
 				debug(RDB_PEER, "%s: EP %p: decref subnet %u (0x%x)"
@@ -847,7 +883,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		} else {
 			debug(RDB_PEER, "%s: EP %p: DEL msg for subnet 0x%x router 0x%x "
 				"and no matching subnet found", __func__, (void*)ep,
-				subnet_id, del->data.router);
+				subnet_id, del->router);
 		}
 	}
 
