@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -21,6 +22,7 @@
 #include <sys/select.h>
 #include <assert.h>
 #include <search.h>
+#include <sys/time.h>
 
 #include "cci-router.h"
 #include "bsd/murmur3.h"
@@ -400,11 +402,13 @@ handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *even
 static void
 send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 {
-	char buf[24]; /* FIXME Magic number */
 	int len = 0, ret = 0;
-	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t *)buf;
-	ccir_rir_data_t *rir = (ccir_rir_data_t *)hdr->rir.data;
+	ccir_peer_hdr_t *hdr = NULL;
+	ccir_rir_data_t *rir = NULL;
+	char buf[sizeof(hdr->rir_size) + sizeof(*rir)];
 
+	hdr = (ccir_peer_hdr_t *)buf;
+	rir = (ccir_rir_data_t *)hdr->rir.data;
 	len = sizeof(hdr->rir_size) + sizeof(*rir);
 
 	assert(len < (int) peer->c->max_send_size);
@@ -415,16 +419,16 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	rir->as = htonl(ep->as);
 	rir->subnet = htonl(ep->subnet);
 	rir->router = htonl(globals->id);
-	rir->instance = 0; /* FIXME */
+	rir->instance = ccir_htonll(globals->instance);
 	rir->rate = htons(ep->e->device->rate / 1000000000);
 	if (!rir->rate) rir->rate = htons(1);
 
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
-	debug(RDB_PEER, "\t%08x %08x %08x %08x %04x %02x",
+	debug(RDB_PEER, "\t%08x %08x %08x %"PRIu64" %04x %02x",
 			ntohl(rir->as), ntohl(rir->subnet),
-			ntohl(rir->router), ntohl(rir->instance),
+			ntohl(rir->router), ccir_ntohll(rir->instance),
 			ntohs(rir->rate), rir->caps);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
@@ -578,13 +582,13 @@ print_router_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		fprintf(stderr, "router id 0x%x instance %u count %u\n", router->id,
+		fprintf(stderr, "router id 0x%x instance %"PRIu64" count %u\n", router->id,
 				router->instance, router->count);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		fprintf(stderr, "router id 0x%x instance %u count %u\n", router->id,
+		fprintf(stderr, "router id 0x%x instance %"PRIu64" count %u\n", router->id,
 				router->instance, router->count);
 		break;
 	}
@@ -730,21 +734,21 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	rir->as = ntohl(rir->as);
 	rir->subnet = ntohl(rir->subnet);
 	rir->router = ntohl(rir->router);
-	rir->instance = ntohl(rir->instance);
+	rir->instance = ccir_ntohll(rir->instance);
 	rir->rate = ntohs(rir->rate);
 
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
 				__func__, (void*)ep, peer->uri);
-		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%08x)",
+		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
 				__func__, (void*)ep, rir->as, rir->as);
-		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%08x)",
+		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%x)",
 				__func__, (void*)ep, rir->subnet, rir->subnet);
-		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%08x)",
+		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
 				__func__, (void*)ep, rir->router, rir->router);
-		debug(RDB_PEER, "%s: EP %p:      instance = %u (0x%08x)",
+		debug(RDB_PEER, "%s: EP %p:      instance = %"PRIu64" (0x%"PRIx64")",
 				__func__, (void*)ep, rir->instance, rir->instance);
-		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%04x)",
+		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%x)",
 				__func__, (void*)ep, rir->rate, rir->rate);
 	}
 
@@ -1452,12 +1456,16 @@ main(int argc, char *argv[])
 	uint32_t caps = 0;
 	ccir_globals_t *globals = NULL;
 	ccir_topo_t *topo = NULL;
+	struct timeval t;
 
 	globals = calloc(1, sizeof(*globals));
 	if (!globals) {
 		ret = ENOMEM;
 		goto out;
 	}
+
+	gettimeofday(&t, NULL);
+	globals->instance = t.tv_sec;
 
 	topo = calloc(1, sizeof(*topo));
 	if (!topo) {

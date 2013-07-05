@@ -103,7 +103,7 @@ typedef struct ccir_ep {
 
 typedef struct ccir_router {
 	uint32_t id;		/* Router's ID */
-	uint32_t instance;	/* Router's instance */
+	uint64_t instance;	/* Router's instance (seconds since epoch) */
 	uint32_t count;		/* Number of subnets served */
 } ccir_router_t;
 
@@ -127,11 +127,42 @@ typedef struct ccir_globals {
 	uint32_t blocking;	/* Should we block (1) or poll (0)? */
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
 	uint32_t id;		/* our id from hashed ep->uris */
-	uint32_t instance;	/* our instance */
+	uint64_t instance;	/* our instance (seconds since epoch) */
 	uint32_t verbose;	/* Level of verbose output */
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;
 } ccir_globals_t;
+
+#define U32_HI 0
+#define U32_LO 1
+
+static inline uint64_t
+ccir_htonll(uint64_t in)
+{
+	union {
+		uint64_t u64;
+		uint32_t u32[2];
+	} out;
+
+	out.u32[U32_HI] = htonl((uint32_t)(in >> 32));
+	out.u32[U32_LO] = htonl((uint32_t)(in & 0xFFFFFFFF));
+
+	return out.u64;
+}
+
+static inline uint64_t
+ccir_ntohll(uint64_t in)
+{
+	union {
+		uint64_t u64;
+		uint32_t u32[2];
+	} out;
+
+	out.u32[U32_HI] = ntohl((uint32_t)(in >> 32));
+	out.u32[U32_LO] = ntohl((uint32_t)(in & 0xFFFFFFFF));
+
+	return out.u64;
+}
 
 #define container_of(p,stype,field) ((stype *)(((uint8_t *)(p)) - offsetof(stype, field)))
 

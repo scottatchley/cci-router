@@ -131,12 +131,12 @@ typedef struct ccir_rir_data {
 	/* 64b */
 	uint32_t router;	/* Router id */
 	/* 96b */
-	uint32_t instance;	/* Random cookie to define instance */
-	/* 128b */
+	uint64_t instance;	/* Seconds since epoch */
+	/* 160b */
 	uint16_t rate;		/* Gb/s */
 	uint8_t caps;		/* Subnet capabilities */
 	uint8_t pad;		/* Reserved */
-	/* 160b */
+	/* 192b */
 } ccir_rir_data_t;
 
 static inline void
