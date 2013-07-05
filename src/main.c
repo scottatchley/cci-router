@@ -1525,6 +1525,5 @@ out_w_init:
 	free(globals->topo);
 	free(globals);
 out:
-	getchar();
 	return ret;
 }
