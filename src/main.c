@@ -197,6 +197,7 @@ disconnect_peers(ccir_globals_t *globals)
 			}
 		}
 	}
+	free(buf);
 	return;
 }
 
@@ -692,6 +693,7 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 			router->count--;
 			if (router->count == 0) {
 				tdelete(&router_id, &(subnet->routers), compare_u32);
+				free(router);
 				debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
 					__func__, (void*)ep, router_id);
 			}
@@ -827,13 +829,14 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 				del->data.instance);
 
 			if (globals->verbose) {
-				debug(RDB_PEER, "%s: EP %p: decref subnet %u "
+				debug(RDB_PEER, "%s: EP %p: decref subnet %u (0x%x)"
 					"(count was %u)", __func__, (void*)ep,
-					subnet->id, subnet->count);
+					subnet->id, subnet->id, subnet->count);
 			}
 			subnet->count--;
 			if (subnet->count == 0) {
 				tdelete(&subnet_id, &(globals->topo->subnets), compare_u32);
+				free(subnet);
 				debug(RDB_PEER, "%s: EP %p: deleted subnet id 0x%x",
 					__func__, (void*)ep, subnet_id);
 			}
@@ -1522,5 +1525,6 @@ out_w_init:
 	free(globals->topo);
 	free(globals);
 out:
+	getchar();
 	return ret;
 }
