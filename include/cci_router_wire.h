@@ -158,11 +158,11 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 typedef struct ccir_rir_data {
 	uint64_t instance;	/* Seconds since epoch */
 	/* 64b */
-	uint32_t as;		/* Autonomous System id */
-	/* 96b */
-	uint32_t subnet;	/* Subnet id */
-	/* 128b */
 	uint32_t router;	/* Router id */
+	/* 96b */
+	uint32_t as;		/* Autonomous System id */
+	/* 128b */
+	uint32_t subnet;	/* Subnet id */
 	/* 160b */
 	uint16_t rate;		/* Gb/s */
 	uint8_t caps;		/* Subnet capabilities */

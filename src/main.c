@@ -421,18 +421,18 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	memset(buf, 0, sizeof(buf));
 	ccir_pack_rir(hdr);
 	rir->instance = ccir_htonll(globals->instance);
+	rir->router = htonl(globals->id);
 	rir->as = htonl(ep->as);
 	rir->subnet = htonl(ep->subnet);
-	rir->router = htonl(globals->id);
 	rir->rate = htons(ep->e->device->rate / 1000000000);
 	if (!rir->rate) rir->rate = htons(1);
 
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
-	debug(RDB_PEER, "\t%08x %08x %08x %"PRIu64" %04x %02x",
+	debug(RDB_PEER, "\t%"PRIx64" %08x %08x %08x %"PRIu64" %04x %02x",
+			ccir_ntohll(rir->instance), ntohl(rir->router),
 			ntohl(rir->as), ntohl(rir->subnet),
-			ntohl(rir->router), ccir_ntohll(rir->instance),
 			ntohs(rir->rate), rir->caps);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
@@ -621,8 +621,58 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 }
 
 static int
+add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
+		uint32_t subnet_rate, ccir_subnet_t **sn)
+{
+	int ret = 0;
+	void *node = NULL;
+	uint32_t *id = &subnet_id;
+	ccir_subnet_t *subnet = NULL;
+
+	node = tfind(id, &(globals->topo->subnets), compare_u32);
+	if (node) {
+		id = *((uint32_t**)node);
+		subnet = container_of(id, ccir_subnet_t, id);
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding ref to subnet %u "
+				"(count was %u)", __func__, (void*)ep,
+				subnet->id, subnet->count);
+		}
+		subnet->count++;
+	} else {
+		int empty = globals->topo->subnets == NULL;
+
+		subnet = calloc(1, sizeof(*subnet));
+		if (!subnet) {
+			/* TODO */
+			assert(0);
+		}
+		subnet->id = subnet_id;
+		subnet->count = 1;
+		subnet->rate = subnet_rate;
+
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: adding subnet %u",
+				__func__, (void*)ep, subnet->id);
+		}
+
+		node = tsearch(&subnet->id, &(globals->topo->subnets), compare_u32);
+		if (!node && !empty) {
+			/* TODO */
+			assert(0);
+		}
+
+		if (globals->verbose)
+			twalk(globals->topo->subnets, print_subnet_tree);
+	}
+	*sn = subnet;
+	return ret;
+}
+
+static int
 add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
-		uint32_t router_id, uint32_t router_instance)
+		uint32_t router_id, uint64_t router_instance)
 {
 	int ret = 0;
 	void *node = NULL;
@@ -733,25 +783,24 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
 	ccir_subnet_t *subnet = NULL;
-	void *node = NULL;
 
 	rir->instance = ccir_ntohll(rir->instance);
+	rir->router = ntohl(rir->router);
 	rir->as = ntohl(rir->as);
 	rir->subnet = ntohl(rir->subnet);
-	rir->router = ntohl(rir->router);
 	rir->rate = ntohs(rir->rate);
 
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
 				__func__, (void*)ep, peer->uri);
+		debug(RDB_PEER, "%s: EP %p:      instance = %"PRIu64" (0x%"PRIx64")",
+				__func__, (void*)ep, rir->instance, rir->instance);
+		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
+				__func__, (void*)ep, rir->router, rir->router);
 		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
 				__func__, (void*)ep, rir->as, rir->as);
 		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%x)",
 				__func__, (void*)ep, rir->subnet, rir->subnet);
-		debug(RDB_PEER, "%s: EP %p:      router = %u (0x%x)",
-				__func__, (void*)ep, rir->router, rir->router);
-		debug(RDB_PEER, "%s: EP %p:      instance = %"PRIu64" (0x%"PRIx64")",
-				__func__, (void*)ep, rir->instance, rir->instance);
 		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%x)",
 				__func__, (void*)ep, rir->rate, rir->rate);
 	}
@@ -759,44 +808,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	if (peer->id == 0)
 		peer->id = rir->router;
 
-	node = tfind(&rir->subnet, &(globals->topo->subnets), compare_u32);
-	if (node) {
-		uint32_t *id = *((uint32_t**)node);
-		subnet = container_of(id, ccir_subnet_t, id);
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding ref to subnet %u "
-				"(count was %u)", __func__, (void*)ep,
-				subnet->id, subnet->count);
-		}
-		subnet->count++;
-	} else {
-		int empty = globals->topo->subnets == NULL;
-
-		subnet = calloc(1, sizeof(*subnet));
-		if (!subnet) {
-			/* TODO */
-			assert(0);
-		}
-		subnet->id = rir->subnet;
-		subnet->count = 1;
-		subnet->rate = rir->rate;
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding subnet %u",
-				__func__, (void*)ep, subnet->id);
-		}
-
-		node = tsearch(&subnet->id, &(globals->topo->subnets), compare_u32);
-		if (!node && !empty) {
-			/* TODO */
-			assert(0);
-		}
-
-		if (globals->verbose)
-			twalk(globals->topo->subnets, print_subnet_tree);
-	}
-
+	add_subnet_to_topo(globals, ep, rir->subnet, rir->rate, &subnet);
 
 	add_router_to_subnet(globals, ep, subnet, rir->router, rir->instance);
 
@@ -808,9 +820,9 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	 */
 	hdr->net = htonl(hdr->net);
 	rir->instance = ccir_htonll(rir->instance);
+	rir->router = htonl(rir->router);
 	rir->as = htonl(rir->as);
 	rir->subnet = htonl(rir->subnet);
-	rir->router = htonl(rir->router);
 	rir->rate = htons(rir->rate);
 
 	{
@@ -1350,8 +1362,8 @@ open_endpoints(ccir_globals_t *globals)
 		goto out;
 	}
 
-	/* Make sure that the devices have specified
-	 * as, subnet, and at least one router */
+	/* Make sure that the devices have specified  as and subnet.
+	 * Devices may have zero, one or more routers */
 	for (i = 0; i < cnt; i++) {
 		int j = 0, as = 0, subnet = 0, router = 0;
 		const char *arg = NULL;
