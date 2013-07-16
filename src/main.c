@@ -1410,9 +1410,9 @@ open_endpoints(ccir_globals_t *globals)
 			}
 		}
 
-		if (!as || !subnet || !router) {
+		if (!as || !subnet) {
 			debug(RDB_EP, "Device [%s] is missing keyword/values "
-					"for as=, subnet=, and/or router=", d->name);
+					"for as= and/or subnet=", d->name);
 			ret = EINVAL;
 			goto out;
 		} else if ((as > 1) || (subnet > 1)) {
