@@ -138,6 +138,7 @@ disconnect_peers(ccir_globals_t *globals)
 					/* clean up now */
 					waiting--;
 					cci_disconnect(c);
+					peer->state = CCIR_PEER_CLOSING;
 				}
 			} else {
 				debug(RDB_PEER, "%s: peer %s has already disconnected",
@@ -893,6 +894,8 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 
 		cci_disconnect(peer->c);
 		peer->c = NULL;
+		peer->state = CCIR_PEER_CLOSED;
+		ep->need_connect++;
 	}
 
 	if (globals->verbose) {
