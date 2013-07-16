@@ -622,11 +622,11 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 
 static int
 add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
-		ccir_rir_data_t *rir)
+		uint32_t router_id, uint32_t router_instance)
 {
 	int ret = 0;
 	void *node = NULL;
-	uint32_t *id = &(rir->router);
+	uint32_t *id = &router_id;
 	ccir_router_t *router = NULL;
 
 	node = tfind(id, &(subnet->routers), compare_u32);
@@ -640,7 +640,7 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 				router->id, router->count);
 		}
 
-		if (router->instance == rir->instance) {
+		if (router->instance == router_instance) {
 			router->count++;
 		} else {
 			/* TODO */
@@ -655,8 +655,8 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 			assert(router);
 			ret = ENOMEM;
 		}
-		router->id = rir->router;
-		router->instance = rir->instance;
+		router->id = router_id;
+		router->instance = router_instance;
 		router->count = 1;
 
 		if (globals->verbose) {
@@ -798,7 +798,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	}
 
 
-	add_router_to_subnet(globals, ep, subnet, rir);
+	add_router_to_subnet(globals, ep, subnet, rir->router, rir->instance);
 
 	/* TODO forward to N-1 endpoints */
 	/* forward_rir(globals, ep, peer, event->recv.ptr, event->recv.len); */
