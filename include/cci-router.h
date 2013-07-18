@@ -105,25 +105,19 @@ typedef struct ccir_ep {
 struct ccir_globals;
 
 typedef struct ccir_router {
-	struct ccir_globals *globals; /* to access the global state */
-	uint64_t instance;	/* Router's instance (seconds since epoch) */
-	uint32_t id;		/* Router's ID */
+	uint32_t id;		/* Router's ID - tree key */
 	uint32_t count;		/* Number of subnets served */
+	uint64_t instance;	/* Router's instance (seconds since epoch) */
+	struct ccir_globals *g;	/* to access global state in twalk */
 } ccir_router_t;
 
 typedef struct ccir_subnet {
-	struct ccir_globals *globals; /* to access the global state */
-	void *routers;		/* Tree of router IDs for this subnet */
-	uint32_t id;		/* Subnet id */
+	uint32_t id;		/* Subnet id  - tree key */
 	uint32_t count;		/* Number of routers on subnet */
+	void *routers;		/* Tree of router IDs for this subnet */
+	struct ccir_globals *g;	/* to access global state in twalk */
 	uint16_t rate;		/* Gb/s */
 } ccir_subnet_t;
-
-typedef struct ccir_pair {
-	uint64_t id;		/* (subnetA << 32) | subnetB where A < B */
-	void *routers;		/* Routers connecting these subnets */
-	uint32_t count;		/* Number of routers */
-} ccir_pair_t;
 
 typedef struct ccir_route {
 	uint64_t id;		/* (subnetA << 32) | subnetB where A < B */
