@@ -430,7 +430,7 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
-	debug(RDB_PEER, "\t%"PRIx64" %08x %08x %08x %"PRIu64" %04x %02x",
+	debug(RDB_PEER, "\t%"PRIx64" %08x %08x %08x %04x %02x",
 			ccir_ntohll(rir->instance), ntohl(rir->router),
 			ntohl(rir->as), ntohl(rir->subnet),
 			ntohs(rir->rate), rir->caps);
@@ -581,19 +581,26 @@ print_router_tree(const void *nodep, const VISIT which, const int depth)
 {
 	uint32_t *id = *(uint32_t **) nodep;
 	ccir_router_t *router = container_of(id, ccir_router_t, id);
+	ccir_globals_t *globals = router->globals;
 
 	switch (which) {
 	case preorder:
 		break;
 	case postorder:
-		fprintf(stderr, "router id 0x%x instance %"PRIu64" count %u\n", router->id,
+		if (globals->verbose) {
+			debug(RDB_TOPO, "*** router id 0x%x instance "
+				"%"PRIx64" count %u", router->id,
 				router->instance, router->count);
+		}
 		break;
 	case endorder:
 		break;
 	case leaf:
-		fprintf(stderr, "router id 0x%x instance %"PRIu64" count %u\n", router->id,
+		if (globals->verbose) {
+			debug(RDB_TOPO, "*** router id 0x%x instance "
+				"%"PRIx64" count %u", router->id,
 				router->instance, router->count);
+		}
 		break;
 	}
 }
@@ -603,19 +610,24 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 {
 	uint32_t *id = *(uint32_t **) nodep;
 	ccir_subnet_t *subnet = container_of(id, ccir_subnet_t, id);
+	ccir_globals_t *globals = subnet->globals;
 
 	switch (which) {
 	case preorder:
 		break;
 	case postorder:
-		fprintf(stderr, "subnet id 0x%x rate %hu count %u\n", subnet->id,
-				subnet->rate, subnet->count);
+		if (globals->verbose) {
+			debug(RDB_TOPO, "*** subnet id 0x%x rate %hu count %u",
+				subnet->id, subnet->rate, subnet->count);
+		}
 		break;
 	case endorder:
 		break;
 	case leaf:
-		fprintf(stderr, "subnet id 0x%x rate %hu count %u\n", subnet->id,
-				subnet->rate, subnet->count);
+		if (globals->verbose) {
+			debug(RDB_TOPO, "*** subnet id 0x%x rate %hu count %u",
+				subnet->id, subnet->rate, subnet->count);
+		}
 		break;
 	}
 }
@@ -648,12 +660,13 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 			/* TODO */
 			assert(0);
 		}
+		subnet->globals = globals;
 		subnet->id = subnet_id;
 		subnet->count = 1;
 		subnet->rate = subnet_rate;
 
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding subnet %u",
+			debug(RDB_PEER, "%s: EP %p: adding subnet %x",
 				__func__, (void*)ep, subnet->id);
 		}
 
@@ -705,8 +718,9 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 			assert(router);
 			ret = ENOMEM;
 		}
-		router->id = router_id;
+		router->globals = globals;
 		router->instance = router_instance;
+		router->id = router_id;
 		router->count = 1;
 
 		if (globals->verbose) {
