@@ -172,10 +172,10 @@ typedef struct ccir_rir_data {
 } ccir_rir_data_t;
 
 static inline void
-ccir_pack_rir(ccir_peer_hdr_t *hdr)
+ccir_pack_rir(ccir_peer_hdr_t *hdr, uint8_t count)
 {
 	hdr->rir.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RIR);
-	hdr->rir.count = 1;
+	hdr->rir.count = count;
 	hdr->net = htonl(hdr->net);
 }
 

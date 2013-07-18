@@ -419,7 +419,7 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	assert(len == (int) sizeof(buf));
 
 	memset(buf, 0, sizeof(buf));
-	ccir_pack_rir(hdr);
+	ccir_pack_rir(hdr, 1);
 	rir->instance = ccir_htonll(globals->instance);
 	rir->router = htonl(globals->id);
 	rir->as = htonl(ep->as);
