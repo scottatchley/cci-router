@@ -677,7 +677,7 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 
 static int
 add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
-		uint32_t router_id, uint64_t router_instance)
+		uint32_t router_id, uint64_t router_instance, ccir_peer_t *peer)
 {
 	int ret = 0;
 	void *node = NULL;
@@ -714,6 +714,8 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subn
 		router->count = 1;
 		router->instance = router_instance;
 		router->g = globals;
+		if (router->id == peer->id)
+			router->peer = peer;
 
 		if (globals->verbose) {
 			debug(RDB_PEER, "%s: EP %p: adding router 0x%x",
@@ -816,7 +818,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 
 	add_subnet_to_topo(globals, ep, rir->subnet[0].id, rir->subnet[0].rate, &subnet);
 
-	add_router_to_subnet(globals, ep, subnet, rir->router, rir->instance);
+	add_router_to_subnet(globals, ep, subnet, rir->router, rir->instance, peer);
 
 	/* TODO forward to N-1 endpoints */
 	/* forward_rir(globals, ep, peer, event->recv.ptr, event->recv.len); */

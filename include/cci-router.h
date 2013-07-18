@@ -108,6 +108,7 @@ typedef struct ccir_router {
 	uint32_t id;		/* Router's ID - tree key */
 	uint32_t count;		/* Number of subnets served */
 	uint64_t instance;	/* Router's instance (seconds since epoch) */
+	ccir_peer_t *peer;	/* Set if peer, NULL if not */
 	struct ccir_globals *g;	/* to access global state in twalk */
 } ccir_router_t;
 
