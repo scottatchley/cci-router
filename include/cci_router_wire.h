@@ -162,11 +162,12 @@ typedef struct ccir_rir_data {
 	/* 96b */
 	uint32_t as;		/* Autonomous System id */
 	/* 128b */
-	uint32_t subnet;	/* Subnet id */
-	/* 160b */
-	uint16_t rate;		/* Gb/s */
-	uint8_t caps;		/* Subnet capabilities */
-	uint8_t pad;		/* Reserved */
+	struct rir_subnet {
+		uint32_t id;		/* Subnet id */
+		uint16_t rate;		/* Gb/s */
+		uint8_t caps;		/* Subnet capabilities */
+		uint8_t pad;		/* Reserved */
+	} subnet[1];
 	/* 192b */
 } ccir_rir_data_t;
 

@@ -423,17 +423,17 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	rir->instance = ccir_htonll(globals->instance);
 	rir->router = htonl(globals->id);
 	rir->as = htonl(ep->as);
-	rir->subnet = htonl(ep->subnet);
-	rir->rate = htons(ep->e->device->rate / 1000000000);
-	if (!rir->rate) rir->rate = htons(1);
+	rir->subnet[0].id = htonl(ep->subnet);
+	rir->subnet[0].rate = htons(ep->e->device->rate / 1000000000);
+	if (!rir->subnet[0].rate) rir->subnet[0].rate = htons(1);
 
 	debug(RDB_PEER, "%s: EP %p: sending RIR to %s len %u (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep, peer->uri, len,
 			hdr->rir.type, hdr->rir.count, hdr->rir.a[0], hdr->rir.a[1]);
 	debug(RDB_PEER, "\t%"PRIx64" %08x %08x %08x %04x %02x",
 			ccir_ntohll(rir->instance), ntohl(rir->router),
-			ntohl(rir->as), ntohl(rir->subnet),
-			ntohs(rir->rate), rir->caps);
+			ntohl(rir->as), ntohl(rir->subnet[0].id),
+			ntohs(rir->subnet[0].rate), rir->subnet[0].caps);
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
 		debug(RDB_PEER, "%s: send RIR to %s "
@@ -793,8 +793,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	rir->instance = ccir_ntohll(rir->instance);
 	rir->router = ntohl(rir->router);
 	rir->as = ntohl(rir->as);
-	rir->subnet = ntohl(rir->subnet);
-	rir->rate = ntohs(rir->rate);
+	rir->subnet[0].id = ntohl(rir->subnet[0].id);
+	rir->subnet[0].rate = ntohs(rir->subnet[0].rate);
 
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
@@ -806,15 +806,15 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		debug(RDB_PEER, "%s: EP %p:      as     = %u (0x%x)",
 				__func__, (void*)ep, rir->as, rir->as);
 		debug(RDB_PEER, "%s: EP %p:      subnet = %u (0x%x)",
-				__func__, (void*)ep, rir->subnet, rir->subnet);
+				__func__, (void*)ep, rir->subnet[0].id, rir->subnet[0].id);
 		debug(RDB_PEER, "%s: EP %p:      rate   = %hu (0x%x)",
-				__func__, (void*)ep, rir->rate, rir->rate);
+				__func__, (void*)ep, rir->subnet[0].rate, rir->subnet[0].rate);
 	}
 
 	if (peer->id == 0)
 		peer->id = rir->router;
 
-	add_subnet_to_topo(globals, ep, rir->subnet, rir->rate, &subnet);
+	add_subnet_to_topo(globals, ep, rir->subnet[0].id, rir->subnet[0].rate, &subnet);
 
 	add_router_to_subnet(globals, ep, subnet, rir->router, rir->instance);
 
@@ -828,8 +828,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	rir->instance = ccir_htonll(rir->instance);
 	rir->router = htonl(rir->router);
 	rir->as = htonl(rir->as);
-	rir->subnet = htonl(rir->subnet);
-	rir->rate = htons(rir->rate);
+	rir->subnet[0].id = htonl(rir->subnet[0].id);
+	rir->subnet[0].rate = htons(rir->subnet[0].rate);
 
 	{
 		uint32_t i;
