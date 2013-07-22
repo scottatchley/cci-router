@@ -58,17 +58,27 @@ ccir_peer_state_str(ccir_peer_state_t state)
 	return NULL;
 }
 
+typedef struct ccir_globals ccir_globals_t;	/* Global state */
+typedef struct ccir_topo ccir_topo_t;		/* Topology state */
+typedef struct ccir_router ccir_router_t;	/* Router information */
+typedef struct ccir_subnet ccir_subnet_t;	/* Subnet information */
+typedef struct ccir_route_t ccir_route_t;	/* One or more paths between A and B */
+typedef struct ccir_path_t ccir_path_t;		/* One path between A and B using
+						   one or more subnet pairs */
+typedef struct ccir_pair ccir_pair_t;		/* Two directly connected subnets */
+
 typedef struct ccir_peer {
 	cci_connection_t *c;	/* CCI connection */
 	char *uri;		/* Peer's CCI URI */
+	ccir_router_t *router;	/* Peer's router struct */
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
-	uint8_t connecting;	/* Waiting on connect event */
-	uint8_t accepting;	/* Waiting on accept/reject event */
-	uint16_t attempts;	/* Number of connection attempts */
 	uint32_t as;		/* Peer's Autonomous System id */
 	uint32_t subnet;	/* Peer's subnet id */
 	uint32_t id;		/* peer's router id to avoid looping */
+	uint16_t attempts;	/* Number of connection attempts */
+	uint8_t connecting;	/* Waiting on connect event */
+	uint8_t accepting;	/* Waiting on accept/reject event */
 } ccir_peer_t;
 
 typedef enum ccir_rconn_state {
@@ -102,38 +112,58 @@ typedef struct ccir_ep {
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
 } ccir_ep_t;
 
-struct ccir_globals;
-
-typedef struct ccir_router {
+struct ccir_router {
 	uint32_t id;		/* Router's ID - tree key */
 	uint32_t count;		/* Number of subnets served */
+	ccir_subnet_t **subnets; /* Array of subnet pointers for this router */
 	uint64_t instance;	/* Router's instance (seconds since epoch) */
 	ccir_peer_t *peer;	/* Set if peer, NULL if not */
-	struct ccir_globals *g;	/* to access global state in twalk */
-} ccir_router_t;
+	ccir_globals_t *g;	/* to access global state in twalk */
+};
 
-typedef struct ccir_subnet {
+struct ccir_subnet {
 	uint32_t id;		/* Subnet id  - tree key */
 	uint32_t count;		/* Number of routers on subnet */
-	void *routers;		/* Tree of router IDs for this subnet */
-	struct ccir_globals *g;	/* to access global state in twalk */
+	ccir_router_t **routers; /* Array of router pointers for this subnet */
+	ccir_globals_t *g;	/* to access global state in twalk */
 	uint16_t rate;		/* Gb/s */
-} ccir_subnet_t;
+};
 
-typedef struct ccir_route {
-	uint64_t id;		/* (subnetA << 32) | subnetB where A < B */
+/* A pair of two directly connected subnets */
+struct ccir_pair {
+	uint64_t id;		/* ((subnetA << 32) | subnetB) where A < B */
 	void *routers;		/* Routers connecting these subnets */
-	struct ccir_globals *globals; /* to access the global state */
-	uint32_t cost;		/* Calculated metric for this route */
-} ccir_route_t;
+	ccir_globals_t *g;	/* Global state */
+};
 
-typedef struct ccir_topo {
+/* A path is one or more pairs that form a path (route) between subnet A and subnet B */
+struct ccir_path {
+	uint64_t *pairs;	/* Array of directly connected pairs */
+	uint32_t count;		/* Number of pairs in path */
+	uint32_t score;		/* Path score */
+};
+
+/* A route has all known, non-looping paths between A and B */
+struct ccir_route {
+	uint64_t id;		/* ((subnetA << 32) | subnetB) where A < B */
+	ccir_path_t *paths;	/* Array of available paths */
+	uint32_t count;		/* Number of paths sorted on path->score */
+	ccir_globals_t *g;	/* Global state */
+};
+
+struct ccir_topo {
 	pthread_rwlock_t lock;	/* Read/write lock */
 	void *subnets;		/* tree of subnets sorted on subnet ID */
-	void *routes;		/* tree of routes originating locally */
-} ccir_topo_t;
+	uint32_t num_subnets;	/* number of subnets */
+	void *routers;		/* tree of routers sorted in router ID */
+	uint32_t num_routers;	/* number of routers */
+	void *routes;		/* tress of all routes */
+	void *pairs;		/* tree of all directly connected subnets */
+	uint32_t num_pairs;	/* number of pairs */
+	void **args;		/* arguments for tree walk operation */
+};
 
-typedef struct ccir_globals {
+struct ccir_globals {
 	ccir_topo_t *topo;	/* topology information */
 	ccir_ep_t **eps;	/* Array of endpoints - NULL terminated */
 	uint32_t ep_cnt;	/* Number of endpoints */
@@ -144,7 +174,7 @@ typedef struct ccir_globals {
 	uint32_t verbose;	/* Level of verbose output */
 	uint32_t debug;		/* Level of debugging output */
 	uint32_t shutdown;
-} ccir_globals_t;
+};
 
 #define container_of(p,stype,field) ((stype *)(((uint8_t *)(p)) - offsetof(stype, field)))
 
