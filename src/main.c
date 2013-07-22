@@ -767,7 +767,7 @@ add_subnet_to_router(ccir_globals_t *globals, ccir_ep_t *ep,
 	int ret = 0, i = 0;
 	ccir_subnet_t *s = NULL;
 
-	s = bsearch(&subnet->id, router->subnets, router->count, sizeof(s), comp_subnet);
+	s = bsearch(&subnet->id, router->subnets, router->count - 1, sizeof(s), comp_subnet);
 	if (s) {
 		debug(RDB_TOPO, "%s: EP %p: router 0x%x already has subnet 0x%x",
 			__func__, (void*)ep, router->id, subnet->id);
@@ -856,48 +856,29 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 		uint32_t router_id, uint64_t instance)
 {
 	int ret = 0;
-#if 0
-	void *node = NULL;
-	uint32_t *id = &router_id;
-	ccir_router_t *router = NULL;
+	ccir_router_t *r = NULL;
 
-	node = tfind(id, &(subnet->routers), compare_u32);
-	if (node) {
-		id = *((uint32_t**)node);
-		router = container_of(id, ccir_router_t, id);
-
-		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: deleting ref to router 0x%x "
-				"(count was %u)", __func__, (void*)ep,
-				router->id, router->count);
-		}
-
-		if (router->instance == instance) {
-			router->count--;
-			if (router->count == 0) {
-				tdelete(&router_id, &(subnet->routers), compare_u32);
-				free(router);
-				debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
-					__func__, (void*)ep, router_id);
-			}
+	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(r), comp_router);
+	if (r) {
+		if (r->instance == instance) {
+			r = subnet->routers[subnet->count - 1];
+			subnet->routers[subnet->count - 1] = NULL;
 		} else {
-			/* TODO */
-			assert(0);
+			assert(r->instance == instance);
 		}
-	} else {
-		debug(RDB_PEER, "%s: EP %p: DEL msg for subnet 0x%x router 0x%x "
-			"and no matching router found", __func__, (void*)ep,
-			subnet->id, router_id);
+		qsort(subnet->routers, subnet->count - 1, sizeof(r), comp_router);
+		subnet->routers = realloc(subnet->routers, (subnet->count - 1) * sizeof(r));
 	}
 
 	if (globals->verbose) {
-		if (subnet->routers != NULL)
-			twalk(subnet->routers, print_router_tree);
-		else
-			debug(RDB_PEER, "%s: EP %p: subnet 0x%x has no routers",
-				__func__, (void*)ep, subnet->id);
+		int i = 0;
+
+		debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__, subnet->id);
+		for (i = 0; i < (int) subnet->count; i++) {
+			r = subnet->routers[i];
+			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, r->id);
+		}
 	}
-#endif
 
 	return ret;
 }
@@ -1100,6 +1081,21 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 				__func__, (void*)ep, peer->uri, ntohl(del->subnet[i]));
 	}
 
+	node = tfind(&del->router, &(globals->topo->routers), compare_u32);
+	if (node) {
+		uint32_t *id = *((uint32_t**)node);
+		ccir_router_t *router = container_of(id, ccir_router_t, id);
+
+		router->count--;
+		if (router->count == 0) {
+			tdelete(&del->router, &(globals->topo->routers), compare_u32);
+			free(router->subnets);
+			free(router);
+			debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
+				__func__, (void*)ep, del->router);
+		}
+	}
+
 	/* find subnets, if find router, remove router && decref subnet */
 	for (i = 0; i < hdr->del.count; i++) {
 		uint32_t subnet_id = 0;
@@ -1122,6 +1118,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			subnet->count--;
 			if (subnet->count == 0) {
 				tdelete(&subnet_id, &(globals->topo->subnets), compare_u32);
+				free(subnet->routers);
 				free(subnet);
 				globals->topo->num_subnets--;
 				debug(RDB_PEER, "%s: EP %p: deleted subnet id 0x%x",
