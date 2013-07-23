@@ -999,6 +999,7 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 		return ret;
 
 	globals->topo->args = calloc(2, sizeof(*globals->topo->args));
+	assert(globals->topo->args);
 	globals->topo->args[0] = subnet;
 	globals->topo->args[1] = router;
 
@@ -1849,6 +1850,47 @@ out_w_init:
 	if (globals->verbose)
 		debug(RDB_ALL, "%s is done", argv[0]);
 
+	if (globals->topo) {
+		if (globals->topo->pairs) {
+			void *node = globals->topo->pairs;
+
+			while (node) {
+				uint64_t *id = *((uint64_t**)node);
+				ccir_pair_t *pair = container_of(id, ccir_pair_t, id);
+
+				tdelete(id, &(globals->topo->pairs), compare_u64);
+				free(pair->routers);
+				free(pair);
+				node = globals->topo->pairs;
+			}
+		}
+		if (globals->topo->subnets) {
+			void *node = globals->topo->subnets;
+
+			while (node) {
+				uint32_t *id = *((uint32_t**)node);
+				ccir_subnet_t *subnet = container_of(id, ccir_subnet_t, id);
+
+				tdelete(id, &(globals->topo->subnets), compare_u32);
+				free(subnet->routers);
+				free(subnet);
+				node = globals->topo->subnets;
+			}
+		}
+		if (globals->topo->routers) {
+			void *node = globals->topo->routers;
+
+			while (node) {
+				uint32_t *id = *((uint32_t**)node);
+				ccir_router_t *router = container_of(id, ccir_router_t, id);
+
+				tdelete(id, &(globals->topo->routers), compare_u32);
+				free(router->subnets);
+				free(router);
+				node = globals->topo->routers;
+			}
+		}
+	}
 	free(globals->topo);
 	free(globals);
 out:
