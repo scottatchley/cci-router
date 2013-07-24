@@ -116,6 +116,8 @@ struct ccir_router {
 	uint32_t id;		/* Router's ID - tree key */
 	uint32_t count;		/* Number of subnets served */
 	uint32_t *subnets;	/* Array of subnet IDs for this router */
+	uint32_t pair_count;	/* Number of pairs served */
+	uint64_t *pairs;	/* Array of pair IDs for this router */
 	uint64_t instance;	/* Router's instance (seconds since epoch) */
 	ccir_peer_t *peer;	/* Set if peer, NULL if not */
 	ccir_globals_t *g;	/* to access global state in twalk */

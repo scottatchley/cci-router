@@ -579,6 +579,9 @@ compare_u32(const void *pa, const void *pb)
 static int
 compare_u64(const void *pa, const void *pb)
 {
+	if (!pa) return -1;
+	if (!pb) return 1;
+
 	if (*(uint64_t *) pa < *(uint64_t *) pb)
 		return -1;
 	if (*(uint64_t *) pa > *(uint64_t *) pb)
@@ -591,13 +594,25 @@ static inline void
 print_router(ccir_globals_t *globals, ccir_router_t *r)
 {
 	int i = 0;
+	uint32_t lo = 0, hi = 0;
 
 	debug(RDB_TOPO, "    router 0x%x count %u instance 0x%"PRIx64" peer %s",
 			r->id, r->count, r->instance,
 			r->peer ? r->peer->uri : "no");
 
+	if (r->count)
+		debug(RDB_TOPO, "        %u subnets:", r->count);
 	for (i = 0; i < (int) r->count; i++)
-		debug(RDB_TOPO, "        subnet 0x%x", r->subnets[i]);
+		debug(RDB_TOPO, "            subnet 0x%x", r->subnets[i]);
+
+	if (r->pair_count) {
+		debug(RDB_TOPO, "        %u pairs:", r->pair_count);
+		for (i = 0; i < (int) r->pair_count; i++) {
+			lo = ((uint32_t)(r->pairs[i] >> 32));
+			hi = (uint32_t)r->pairs[i];
+			debug(RDB_TOPO, "            pair 0x%x_%x", lo, hi);
+		}
+	}
 
 	return;
 }
@@ -819,7 +834,7 @@ add_subnet_to_router(ccir_globals_t *globals, ccir_router_t *router, uint32_t su
 			__func__, router->id, subnet_id);
 
 		router->count++;
-		router->subnets = realloc(router->subnets, sizeof(s) * router->count);
+		router->subnets = realloc(router->subnets, sizeof(*s) * router->count);
 		router->subnets[router->count - 1] = subnet_id;
 
 		qsort(router->subnets, router->count, sizeof(*s), comp_subnet);
@@ -830,6 +845,60 @@ add_subnet_to_router(ccir_globals_t *globals, ccir_router_t *router, uint32_t su
 		debug(RDB_TOPO, "%s: ** router 0x%x has subnets:", __func__, router->id);
 		for (i = 0; i < (int) router->count; i++)
 			debug(RDB_TOPO, "%s: **** subnet 0x%x", __func__, router->subnets[i]);
+	}
+	return;
+}
+
+static inline int
+comp_pair(const void *pr1, const void *pr2)
+{
+	uint32_t *p1 = (uint32_t *)pr1;
+	uint32_t *p2 = (uint32_t *)pr2;
+
+	if (!p1) return -1;
+	if (!p2) return 1;
+	return *p1 - *p2;
+}
+
+static void
+add_pair_to_router(ccir_globals_t *globals, ccir_router_t *router, uint64_t pair_id)
+{
+	int i = 0;
+	uint32_t lo = 0, hi = 0;
+	uint64_t *p = NULL;
+
+	p = bsearch(&pair_id, router->pairs, router->pair_count, sizeof(*p), comp_pair);
+	if (p) {
+		assert(*p == pair_id);
+		if (globals->verbose) {
+			lo = ((uint32_t)(pair_id >> 32));
+			hi = (uint32_t)pair_id;
+			debug(RDB_TOPO, "%s: router 0x%x already has pair 0x%x_%x",
+				__func__, router->id, lo, hi);
+		}
+	} else {
+		if (globals->verbose) {
+			lo = ((uint32_t)(pair_id >> 32));
+			hi = (uint32_t)pair_id;
+			debug(RDB_TOPO, "%s: router 0x%x adding pair 0x%x_%x",
+				__func__, router->id, lo, hi);
+		}
+
+		router->pair_count++;
+		router->pairs = realloc(router->pairs, sizeof(*p) * router->pair_count);
+		router->pairs[router->pair_count - 1] = pair_id;
+
+		qsort(router->pairs, router->pair_count, sizeof(*p), compare_u64);
+	}
+
+	if (globals->verbose) {
+		print_router(globals, router);
+		debug(RDB_TOPO, "%s: ** router 0x%x has pairs:", __func__, router->id);
+		for (i = 0; i < (int) router->pair_count; i++) {
+			lo = ((uint32_t)(router->pairs[i] >> 32));
+			hi = (uint32_t)router->pairs[i];
+			debug(RDB_TOPO, "%s: **** pair 0x%x_%x", __func__, lo, hi);
+		}
 	}
 	return;
 }
@@ -905,6 +974,11 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 
 	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(r), comp_router);
 	if (r) {
+		if (globals->verbose) {
+			debug(RDB_PEER, "%s: EP %p: decref subnet %u (0x%x)"
+				"(count was %u)", __func__, (void*)ep,
+				subnet->id, subnet->id, subnet->count);
+		}
 		subnet->count--;
 		*r = subnet->routers[subnet->count];
 		subnet->routers[subnet->count] = 0;
@@ -915,9 +989,13 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 	if (globals->verbose) {
 		int i = 0;
 
-		debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__, subnet->id);
-		for (i = 0; i < (int) subnet->count; i++)
-			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, subnet->routers[i]);
+		if (subnet->count) {
+			debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__,
+					subnet->id);
+			for (i = 0; i < (int) subnet->count; i++)
+				debug(RDB_TOPO, "%s: **** router 0x%x", __func__,
+						subnet->routers[i]);
+		}
 	}
 
 	return ret;
@@ -1005,6 +1083,7 @@ add_pair(ccir_globals_t *globals, ccir_subnet_t *old, ccir_subnet_t *new,
 	}
 
 	add_router_to_pair(globals, pair, old, router->id);
+	add_pair_to_router(globals, router, pair->id);
 
 	return;
 }
@@ -1191,12 +1270,6 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			delete_router_from_subnet(globals, ep, subnet, del->router,
 				del->instance);
 
-			if (globals->verbose) {
-				debug(RDB_PEER, "%s: EP %p: decref subnet %u (0x%x)"
-					"(count was %u)", __func__, (void*)ep,
-					subnet->id, subnet->id, subnet->count);
-			}
-			subnet->count--;
 			if (subnet->count == 0) {
 				tdelete(&subnet_id, &(globals->topo->subnets), compare_u32);
 				free(subnet->routers);
