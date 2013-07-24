@@ -658,6 +658,41 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 	}
 }
 
+static inline void
+print_pair(ccir_globals_t *globals, ccir_pair_t *p)
+{
+	int i = 0;
+	uint32_t lo = ((uint32_t)(p->id >> 32)), hi = (uint32_t)(p->id);
+
+	debug(RDB_TOPO, "    pair 0x%x_%x count %u", lo, hi, p->count);
+
+	for (i = 0; i < (int) p->count; i++)
+		debug(RDB_TOPO, "        router 0x%x", p->routers[i]);
+
+	return;
+}
+
+static void
+print_pair_tree(const void *nodep, const VISIT which, const int depth)
+{
+	uint32_t *id = *(uint32_t **) nodep;
+	ccir_pair_t *pair = container_of(id, ccir_pair_t, id);
+	ccir_globals_t *globals = pair->g;
+
+	switch (which) {
+	case preorder:
+		break;
+	case postorder:
+		print_pair(globals, pair);
+		break;
+	case endorder:
+		break;
+	case leaf:
+		print_pair(globals, pair);
+		break;
+	}
+}
+
 static inline int
 comp_router(const void *rtr1, const void *rtr2)
 {
@@ -685,7 +720,7 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_subnet_t *subnet, uint32_t ro
 			__func__, subnet->id, router_id);
 
 		subnet->count++;
-		subnet->routers = realloc(subnet->routers, sizeof(r) * subnet->count);
+		subnet->routers = realloc(subnet->routers, sizeof(*r) * subnet->count);
 		subnet->routers[subnet->count - 1] = router_id;
 
 		qsort(subnet->routers, subnet->count, sizeof(*r), comp_router);
@@ -890,23 +925,39 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 
 static void
 add_router_to_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_subnet_t *old,
-			ccir_router_t *router)
+			uint32_t router_id)
 {
-	ccir_router_t *r = NULL;
+	uint32_t *r = NULL, lo = 0, hi = 0;
 
 	/* router is in new, if router is in old, add to pair if not already */
-	r = bsearch(&router->id, old->routers, old->count, sizeof(r), comp_router);
-	if (!r) {
-		/* Note: pair->count was incremented in add_pair */
-		pair->routers = realloc(pair->routers, sizeof(r) * pair->count);
-		pair->routers[pair->count - 1] = router;
+	r = bsearch(&router_id, old->routers, old->count, sizeof(*r), comp_router);
+	if (r) {
+		assert(*r == router_id);
+		debug(RDB_TOPO, "%s: router 0x%x also has router 0x%x, need to add to pair",
+			__func__, old->id, router_id);
 
-		qsort(pair->routers, pair->count, sizeof(r), comp_router);
+		r = bsearch(&router_id, pair->routers, pair->count, sizeof(*r), comp_router);
+		if (r) {
+			if (globals->verbose) {
+				lo = ((uint32_t)(pair->id >> 32));
+				hi = (uint32_t)(pair->id);
+				debug(RDB_TOPO, "%s: pair 0x%x_%x already has router 0x%x",
+					__func__, lo, hi, router_id);
+			}
+		} else {
+			if (globals->verbose) {
+				lo = ((uint32_t)(pair->id >> 32));
+				hi = (uint32_t)(pair->id);
+				debug(RDB_TOPO, "%s: pair 0x%x_%x adding router 0x%x",
+					__func__, lo, hi, router_id);
+			}
 
-		if (globals->verbose)
-			debug(RDB_TOPO, "%s: adding router 0x%x to pair 0x%x.%x",
-				__func__, router->id, (uint32_t)(pair->id >> 32),
-				(uint32_t)pair->id);
+			pair->count++;
+			pair->routers = realloc(pair->routers, sizeof(*r) * pair->count);
+			pair->routers[pair->count - 1] = router_id;
+
+			qsort(pair->routers, pair->count, sizeof(*r), comp_router);
+		}
 	}
 
 	return;
@@ -935,7 +986,7 @@ add_pair(ccir_globals_t *globals, ccir_subnet_t *old, ccir_subnet_t *new,
 			assert(pair);
 		}
 		pair->id = pair_id;
-		pair->count = 1;
+		pair->count = 0;
 		pair->g = globals;
 
 		node = tsearch(&pair->id, &(globals->topo->pairs), compare_u64);
@@ -949,11 +1000,11 @@ add_pair(ccir_globals_t *globals, ccir_subnet_t *old, ccir_subnet_t *new,
 			uint32_t lo = (uint32_t)(pair_id >> 32);
 			uint32_t hi = (uint32_t)(pair_id);
 
-		debug(RDB_TOPO, "*** subnet id 0x%x added 0x%x.%x", old->id, lo, hi);
+		debug(RDB_TOPO, "*** subnet id 0x%x added 0x%x_%x", old->id, lo, hi);
 		}
 	}
 
-	add_router_to_pair(globals, pair, old, router);
+	add_router_to_pair(globals, pair, old, router->id);
 
 	return;
 }
@@ -1012,6 +1063,9 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 
 	free(globals->topo->args);
 	globals->topo->args = NULL;
+
+	if (globals->verbose)
+		twalk(globals->topo->pairs, print_pair_tree);
 
 	return ret;
 }

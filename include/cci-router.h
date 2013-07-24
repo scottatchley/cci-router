@@ -132,7 +132,7 @@ struct ccir_subnet {
 /* A pair of two directly connected subnets */
 struct ccir_pair {
 	uint64_t id;		/* ((subnetA << 32) | subnetB) where A < B */
-	void **routers;		/* Array of pointers to routers connecting these subnets */
+	uint32_t *routers;	/* Array of routers IDs connecting these subnets */
 	uint32_t count;		/* Number of routers in array */
 	ccir_globals_t *g;	/* Global state */
 };
