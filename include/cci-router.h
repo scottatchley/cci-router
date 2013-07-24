@@ -115,7 +115,7 @@ typedef struct ccir_ep {
 struct ccir_router {
 	uint32_t id;		/* Router's ID - tree key */
 	uint32_t count;		/* Number of subnets served */
-	ccir_subnet_t **subnets; /* Array of subnet pointers for this router */
+	uint32_t *subnets;	/* Array of subnet IDs for this router */
 	uint64_t instance;	/* Router's instance (seconds since epoch) */
 	ccir_peer_t *peer;	/* Set if peer, NULL if not */
 	ccir_globals_t *g;	/* to access global state in twalk */
@@ -124,7 +124,7 @@ struct ccir_router {
 struct ccir_subnet {
 	uint32_t id;		/* Subnet id  - tree key */
 	uint32_t count;		/* Number of routers on subnet */
-	ccir_router_t **routers; /* Array of router pointers for this subnet */
+	uint32_t *routers;	/* Array of router IDs for this subnet */
 	ccir_globals_t *g;	/* to access global state in twalk */
 	uint16_t rate;		/* Gb/s */
 };

@@ -587,6 +587,21 @@ compare_u64(const void *pa, const void *pb)
 	return 0; /* match */
 }
 
+static inline void
+print_router(ccir_globals_t *globals, ccir_router_t *r)
+{
+	int i = 0;
+
+	debug(RDB_TOPO, "    router 0x%x count %u instance 0x%"PRIx64" peer %s",
+			r->id, r->count, r->instance,
+			r->peer ? r->peer->uri : "no");
+
+	for (i = 0; i < (int) r->count; i++)
+		debug(RDB_TOPO, "        subnet 0x%x", r->subnets[i]);
+
+	return;
+}
+
 static void
 print_router_tree(const void *nodep, const VISIT which, const int depth)
 {
@@ -598,18 +613,28 @@ print_router_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		debug(RDB_TOPO, "*** router id 0x%x instance "
-				"%"PRIx64" count %u", router->id,
-				router->instance, router->count);
+		print_router(globals, router);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		debug(RDB_TOPO, "*** router id 0x%x instance "
-				"%"PRIx64" count %u", router->id,
-				router->instance, router->count);
+		print_router(globals, router);
 		break;
 	}
+}
+
+static inline void
+print_subnet(ccir_globals_t *globals, ccir_subnet_t *s)
+{
+	int i = 0;
+
+	debug(RDB_TOPO, "    subnet 0x%x count %u rate %hu",
+			s->id, s->count, s->rate);
+
+	for (i = 0; i < (int) s->count; i++)
+		debug(RDB_TOPO, "        router 0x%x", s->routers[i]);
+
+	return;
 }
 
 static void
@@ -623,21 +648,61 @@ print_subnet_tree(const void *nodep, const VISIT which, const int depth)
 	case preorder:
 		break;
 	case postorder:
-		debug(RDB_TOPO, "*** subnet id 0x%x rate %hu count %u",
-				subnet->id, subnet->rate, subnet->count);
+		print_subnet(globals, subnet);
 		break;
 	case endorder:
 		break;
 	case leaf:
-		debug(RDB_TOPO, "*** subnet id 0x%x rate %hu count %u",
-				subnet->id, subnet->rate, subnet->count);
+		print_subnet(globals, subnet);
 		break;
 	}
 }
 
+static inline int
+comp_router(const void *rtr1, const void *rtr2)
+{
+	uint32_t *r1 = (uint32_t *)rtr1;
+	uint32_t *r2 = (uint32_t *)rtr2;
+
+	if (!r1) return -1;
+	if (!r2) return 1;
+	return *r1 - *r2;
+}
+
+static void
+add_router_to_subnet(ccir_globals_t *globals, ccir_subnet_t *subnet, uint32_t router_id)
+{
+	int i = 0;
+	uint32_t *r = NULL;
+
+	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(*r), comp_router);
+	if (r) {
+		assert(*r == router_id);
+		debug(RDB_TOPO, "%s: subnet 0x%x already has router 0x%x",
+			__func__, subnet->id, router_id);
+	} else {
+		debug(RDB_TOPO, "%s: subnet 0x%x adding router 0x%x",
+			__func__, subnet->id, router_id);
+
+		subnet->count++;
+		subnet->routers = realloc(subnet->routers, sizeof(r) * subnet->count);
+		subnet->routers[subnet->count - 1] = router_id;
+
+		qsort(subnet->routers, subnet->count, sizeof(*r), comp_router);
+	}
+
+	if (globals->verbose) {
+		debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__, subnet->id);
+		for (i = 0; i < (int) subnet->count; i++)
+			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, subnet->routers[i]);
+	}
+
+	return;
+}
+
 static int
 add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
-		uint32_t subnet_rate, ccir_subnet_t **sn, int *new)
+		uint32_t subnet_rate, uint32_t router_id, ccir_subnet_t **sn, int *new)
 {
 	int ret = 0;
 	void *node = NULL;
@@ -654,7 +719,7 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 				"(count was %u)", __func__, (void*)ep,
 				subnet->id, subnet->count);
 		}
-		subnet->count++;
+
 		*new = 0;
 	} else {
 		int empty = globals->topo->subnets == NULL;
@@ -665,7 +730,7 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 			assert(0);
 		}
 		subnet->id = subnet_id;
-		subnet->count = 1;
+		subnet->count = 0;
 		subnet->g = globals;
 		subnet->rate = subnet_rate;
 
@@ -681,17 +746,63 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 		}
 		globals->topo->num_subnets++;
 		*new = 1;
-
-		if (globals->verbose)
-			twalk(globals->topo->subnets, print_subnet_tree);
 	}
+
+	add_router_to_subnet(globals, subnet, router_id);
+
+	if (globals->verbose)
+		twalk(globals->topo->subnets, print_subnet_tree);
+
 	*sn = subnet;
 	return ret;
 }
 
+static inline int
+comp_subnet(const void *sn1, const void *sn2)
+{
+	uint32_t *s1 = (uint32_t *)sn1;
+	uint32_t *s2 = (uint32_t *)sn2;
+
+	if (!s1) return -1;
+	if (!s2) return 1;
+	return *s1 - *s2;
+}
+
+static void
+add_subnet_to_router(ccir_globals_t *globals, ccir_router_t *router, uint32_t subnet_id)
+{
+	int i = 0;
+	uint32_t *s = NULL;
+
+	s = bsearch(&subnet_id, router->subnets, router->count, sizeof(*s), comp_subnet);
+	if (s) {
+		assert(*s == subnet_id);
+		debug(RDB_TOPO, "%s: router 0x%x already has subnet 0x%x",
+			__func__, router->id, subnet_id);
+	} else {
+		debug(RDB_TOPO, "%s: router 0x%x adding subnet 0x%x",
+			__func__, router->id, subnet_id);
+
+		router->count++;
+		router->subnets = realloc(router->subnets, sizeof(s) * router->count);
+		router->subnets[router->count - 1] = subnet_id;
+
+		qsort(router->subnets, router->count, sizeof(*s), comp_subnet);
+	}
+
+	if (globals->verbose) {
+		print_router(globals, router);
+		debug(RDB_TOPO, "%s: ** router 0x%x has subnets:", __func__, router->id);
+		for (i = 0; i < (int) router->count; i++)
+			debug(RDB_TOPO, "%s: **** subnet 0x%x", __func__, router->subnets[i]);
+	}
+	return;
+}
+
 static int
 add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
-		uint64_t router_instance, ccir_peer_t *peer, ccir_router_t **r, int *new)
+		uint64_t router_instance, uint32_t subnet_id, ccir_peer_t *peer,
+		ccir_router_t **r, int *new)
 {
 	int ret = 0;
 	void *node = NULL;
@@ -710,12 +821,9 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 				router->id, router->count);
 		}
 
-		if (router->instance == router_instance) {
-			router->count++;
-		} else {
-			/* TODO */
-			assert(router->instance == router_instance);
-		}
+		/* TODO */
+		assert(router->instance == router_instance);
+
 		*new = 0;
 	} else {
 		int empty = topo->routers == NULL;
@@ -727,11 +835,9 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 			ret = ENOMEM;
 		}
 		router->id = router_id;
-		router->count = 1;
+		router->count = 0;
 		router->instance = router_instance;
 		router->g = globals;
-		if (router->id == peer->id)
-			router->peer = peer;
 
 		if (globals->verbose) {
 			debug(RDB_PEER, "%s: EP %p: adding router 0x%x",
@@ -745,109 +851,13 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 		}
 		*new = 1;
 	}
+
+	add_subnet_to_router(globals, router, subnet_id);
+
+	if (globals->verbose)
+		twalk(globals->topo->routers, print_router_tree);
+
 	*r = router;
-	return ret;
-}
-
-static int
-comp_subnet(const void *sn1, const void *sn2)
-{
-	ccir_subnet_t *s1 = (ccir_subnet_t *)sn1;
-	ccir_subnet_t *s2 = (ccir_subnet_t *)sn2;
-
-	if (!s1) return 1;
-	if (!s2) return -1;
-	return s2->id - s1->id;
-}
-
-static int
-add_subnet_to_router(ccir_globals_t *globals, ccir_ep_t *ep,
-		ccir_router_t *router, ccir_subnet_t *subnet)
-{
-	int ret = 0, i = 0;
-	ccir_subnet_t *s = NULL;
-
-	s = bsearch(&subnet->id, router->subnets, router->count - 1, sizeof(s), comp_subnet);
-	if (s) {
-		debug(RDB_TOPO, "%s: EP %p: router 0x%x already has subnet 0x%x",
-			__func__, (void*)ep, router->id, subnet->id);
-	} else {
-		ccir_subnet_t **new = NULL;
-
-		debug(RDB_TOPO, "%s: EP %p: router 0x%x adding subnet 0x%x",
-			__func__, (void*)ep, router->id, subnet->id);
-
-		/* Note: router->count was incremented in add_router_to_topo */
-		new = realloc(router->subnets, sizeof(s) * router->count);
-		if (!new) {
-			/* TODO */
-			assert(new);
-			router->count--; /* FIXME: here? */
-			ret = ENOMEM;
-		}
-		router->subnets = new;
-		router->subnets[router->count - 1] = subnet;
-
-		qsort(router->subnets, router->count, sizeof(s), comp_subnet);
-	}
-
-	if (globals->verbose) {
-		debug(RDB_TOPO, "%s: ** router 0x%x has subnets:", __func__, router->id);
-		for (i = 0; i < (int) router->count; i++) {
-			s = router->subnets[i];
-			debug(RDB_TOPO, "%s: **** subnet 0x%x", __func__, s->id);
-		}
-	}
-	return ret;
-}
-
-static int
-comp_router(const void *rtr1, const void *rtr2)
-{
-	ccir_router_t *r1 = (ccir_router_t *)rtr1;
-	ccir_router_t *r2 = (ccir_router_t *)rtr2;
-
-	if (!r1) return 1;
-	if (!r2) return -1;
-	return r2->id - r1->id;
-}
-
-static int
-add_router_to_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t *subnet,
-		ccir_router_t *router)
-{
-	int ret = 0, i = 0;
-	ccir_router_t *r = NULL;
-
-	r = bsearch(&router->id, subnet->routers, subnet->count, sizeof(r), comp_router);
-	if (r) {
-		debug(RDB_TOPO, "%s: EP %p: subnet 0x%x already has router 0x%x",
-			__func__, (void*)ep, subnet->id, router->id);
-	} else {
-		ccir_router_t **new = NULL;
-
-		/* Note: subnet->count was incremented in add_subnet_to_topo */
-		new = realloc(subnet->routers, sizeof(r) * subnet->count);
-		if (!new) {
-			/* TODO */
-			assert(new);
-			subnet->count--; /* FIXME: here? */
-			ret = ENOMEM;
-		}
-		subnet->routers = new;
-		subnet->routers[subnet->count - 1] = router;
-
-		qsort(subnet->routers, subnet->count, sizeof(r), comp_router);
-	}
-
-	if (globals->verbose) {
-		debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__, subnet->id);
-		for (i = 0; i < (int) subnet->count; i++) {
-			r = subnet->routers[i];
-			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, r->id);
-		}
-	}
-
 	return ret;
 }
 
@@ -856,28 +866,23 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 		uint32_t router_id, uint64_t instance)
 {
 	int ret = 0;
-	ccir_router_t *r = NULL;
+	uint32_t *r = NULL;
 
 	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(r), comp_router);
 	if (r) {
-		if (r->instance == instance) {
-			r = subnet->routers[subnet->count - 1];
-			subnet->routers[subnet->count - 1] = NULL;
-		} else {
-			assert(r->instance == instance);
-		}
-		qsort(subnet->routers, subnet->count - 1, sizeof(r), comp_router);
-		subnet->routers = realloc(subnet->routers, (subnet->count - 1) * sizeof(r));
+		subnet->count--;
+		*r = subnet->routers[subnet->count];
+		subnet->routers[subnet->count] = 0;
+		qsort(subnet->routers, subnet->count, sizeof(r), comp_router);
+		subnet->routers = realloc(subnet->routers, subnet->count * sizeof(r));
 	}
 
 	if (globals->verbose) {
 		int i = 0;
 
 		debug(RDB_TOPO, "%s: ** subnet 0x%x has routers:", __func__, subnet->id);
-		for (i = 0; i < (int) subnet->count; i++) {
-			r = subnet->routers[i];
-			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, r->id);
-		}
+		for (i = 0; i < (int) subnet->count; i++)
+			debug(RDB_TOPO, "%s: **** router 0x%x", __func__, subnet->routers[i]);
 	}
 
 	return ret;
@@ -1045,23 +1050,22 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	if (peer->id == 0)
 		peer->id = rir->router;
 
-	ret = add_router_to_topo(globals, ep, rir->router, rir->instance, peer,
-			&router, &new_router);
+	ret = add_router_to_topo(globals, ep, rir->router, rir->instance, rir->subnet[0].id,
+			peer, &router, &new_router);
 	assert(ret == 0);
 
 	ret = add_subnet_to_topo(globals, ep, rir->subnet[0].id, rir->subnet[0].rate,
-			&subnet, &new_subnet);
+			router->id, &subnet, &new_subnet);
 	assert(ret == 0);
 
-	if (new_subnet) {
-		ret = add_pairs(globals, subnet, router);
-		assert(ret == 0);
+	if (peer->id == router->id && peer->subnet == subnet->id) {
+		router->peer = peer;
+		peer->router = router;
+	} else {
+		debug(RDB_TOPO, "peer->id 0x%x router->id 0x%x peer->subnet 0x%x subnet->id 0x%x", peer->id, router->id, peer->subnet, subnet->id);
 	}
 
-	ret = add_subnet_to_router(globals, ep, router, subnet);
-	assert(ret == 0);
-
-	ret = add_router_to_subnet(globals, ep, subnet, router);
+	ret = add_pairs(globals, subnet, router);
 	assert(ret == 0);
 
 	/* TODO forward to N-1 endpoints */
@@ -1701,6 +1705,10 @@ open_endpoints(ccir_globals_t *globals)
 					"for as= or subnet=", d->name);
 			ret = EINVAL;
 			goto out;
+		}
+		if (peer) {
+			peer->as = ep->as;
+			peer->subnet = ep->subnet;
 		}
 
 		if (router < CCIR_MAX_PEERS) {
