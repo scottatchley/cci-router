@@ -179,6 +179,27 @@ struct ccir_globals {
 	uint32_t shutdown;
 };
 
+static inline uint64_t
+pack_pair_id(uint32_t a, uint32_t b)
+{
+	uint64_t id = 0;
+
+	if (a < b)
+		id = ((uint64_t) a << 32) | (uint64_t) b;
+	else
+		id = ((uint64_t) b << 32) | (uint64_t) a;
+
+	return id;
+}
+
+static inline void
+parse_pair_id(uint64_t id, uint32_t *lo, uint32_t *hi)
+{
+	*lo = (uint32_t)(id >> 32);
+	*hi = (uint32_t)id;
+	return;
+}
+
 #define container_of(p,stype,field) ((stype *)(((uint8_t *)(p)) - offsetof(stype, field)))
 
 #define CCIR_DEBUG	(1)	/* Turn on for development */

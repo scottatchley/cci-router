@@ -608,8 +608,7 @@ print_router(ccir_globals_t *globals, ccir_router_t *r)
 	if (r->pair_count) {
 		debug(RDB_TOPO, "        %u pairs:", r->pair_count);
 		for (i = 0; i < (int) r->pair_count; i++) {
-			lo = ((uint32_t)(r->pairs[i] >> 32));
-			hi = (uint32_t)r->pairs[i];
+			parse_pair_id(r->pairs[i], &lo, &hi);
 			debug(RDB_TOPO, "            pair 0x%x_%x", lo, hi);
 		}
 	}
@@ -677,7 +676,9 @@ static inline void
 print_pair(ccir_globals_t *globals, ccir_pair_t *p)
 {
 	int i = 0;
-	uint32_t lo = ((uint32_t)(p->id >> 32)), hi = (uint32_t)(p->id);
+	uint32_t lo = 0, hi = 0;
+
+	parse_pair_id(p->id, &lo, &hi);
 
 	debug(RDB_TOPO, "    pair 0x%x_%x count %u", lo, hi, p->count);
 
