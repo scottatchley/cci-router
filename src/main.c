@@ -1046,12 +1046,25 @@ add_pair(ccir_globals_t *globals, ccir_subnet_t *old, ccir_subnet_t *new,
 		ccir_router_t *router)
 {
 	/* int i = 0; */
+	uint32_t *s = NULL;
 	void *node = NULL;
 	ccir_pair_t *pair = NULL;
 	uint64_t pair_id = old->id < new->id ?
 		((uint64_t) old->id << 32) | new->id :
 		((uint64_t) new->id << 32) | old->id;
 
+	/* does the router have the existing subnet? */
+	s = bsearch(&old->id, router->subnets, router->count, sizeof(*s), comp_subnet);
+	if (!s) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: subnet 0x%x does not have router 0x%x",
+					__func__, old->id, router->id);
+		}
+		/* we are done */
+		return;
+	}
+
+	/* Find the node and add the router */
 	node = tfind(&pair_id, &(globals->topo->pairs), compare_u64);
 	if (node) {
 		uint64_t *id = *((uint64_t**)node);
