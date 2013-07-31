@@ -918,7 +918,7 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 		subnet->count--;
 		*r = subnet->routers[subnet->count];
 		subnet->routers[subnet->count] = 0;
-		qsort(subnet->routers, subnet->count, sizeof(r), compare_u32);
+		qsort(subnet->routers, subnet->count, sizeof(*r), compare_u32);
 		subnet->routers = realloc(subnet->routers, subnet->count * sizeof(r));
 	}
 
@@ -946,7 +946,7 @@ compare_routes(const void *rr1, const void *rr2)
 	if (!r1) return -1;
 	if (!r2) return 1;
 
-	return (r1->id > r2->id) ? 1 : r1->id < r2->id ? -1 : 0;
+	return r1 - r2;
 }
 
 static inline uint32_t
@@ -968,7 +968,7 @@ score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 				uint32_t *id = *((uint32_t**)node);
 				subnet = container_of(id, ccir_subnet_t, id);
 
-				path->score = 1000 / subnet->rate;
+				score = 1000 / subnet->rate;
 			} else {
 				/* TODO */
 				assert(node);
@@ -980,7 +980,7 @@ score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 			uint32_t *id = *((uint32_t**)node);
 			subnet = container_of(id, ccir_subnet_t, id);
 
-			path->score += 1000 / subnet->rate;
+			score += 1000 / subnet->rate;
 		} else {
 			/* TODO */
 			assert(node);
@@ -1271,7 +1271,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	}
 	globals->topo->args[0] = (void *)pair;
 
-	twalk(globals->topo->subnets, routes_prepend_pair);
+	twalk(globals->topo->routes, routes_prepend_pair);
 
 	free(globals->topo->args);
 

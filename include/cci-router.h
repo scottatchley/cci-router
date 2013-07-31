@@ -127,6 +127,8 @@ struct ccir_subnet {
 	uint32_t id;		/* Subnet id  - tree key */
 	uint32_t count;		/* Number of routers on subnet */
 	uint32_t *routers;	/* Array of router IDs for this subnet */
+	uint32_t pair_count;	/* Number of pairs served */
+	uint64_t *pairs;	/* Array of pair IDs for this router */
 	ccir_globals_t *g;	/* to access global state in twalk */
 	uint16_t rate;		/* Gb/s */
 };
