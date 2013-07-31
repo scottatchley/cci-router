@@ -1258,8 +1258,8 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 				/* TODO */
 				assert(pnb->pairs);
 			}
-			pnb->pairs[0] = pair->id;
-			memcpy(&pnb->pairs[1], pna->pairs, pna->count * sizeof(uint64_t));
+			memcpy(pnb->pairs, pna->pairs, pna->count * sizeof(uint64_t));
+			pnb->pairs[pnb->count - 1] = pair->id;
 			pnb->score = score_path(globals, pnb);
 		}
 	} else {
