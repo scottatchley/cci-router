@@ -62,8 +62,8 @@ typedef struct ccir_globals ccir_globals_t;	/* Global state */
 typedef struct ccir_topo ccir_topo_t;		/* Topology state */
 typedef struct ccir_router ccir_router_t;	/* Router information */
 typedef struct ccir_subnet ccir_subnet_t;	/* Subnet information */
-typedef struct ccir_route_t ccir_route_t;	/* One or more paths between A and B */
-typedef struct ccir_path_t ccir_path_t;		/* One path between A and B using
+typedef struct ccir_route ccir_route_t;		/* One or more paths between A and B */
+typedef struct ccir_path ccir_path_t;		/* One path between A and B using
 						   one or more subnet pairs */
 typedef struct ccir_pair ccir_pair_t;		/* Two directly connected subnets */
 
@@ -139,9 +139,13 @@ struct ccir_pair {
 	ccir_globals_t *g;	/* Global state */
 };
 
-/* A path is one or more pairs that form a path (route) between subnet A and subnet B */
+/* A path is one or more pairs that form a path (route) between subnet A and subnet B.
+ * For example: AG, GE, EK, KB traverses subnets AGEKB and would be stored as
+ * AG,EG,EK,BK since pair IDs use lo/hi naming.
+ * The count is the number of pairs (number of subnets - 1).
+ * The score is the comparison metric (e.g. inverse bandwidth, hop count, etc. ) */
 struct ccir_path {
-	uint64_t *pairs;	/* Array of directly connected pairs */
+	uint64_t *pairs;	/* Array of directly connected pair IDs */
 	uint32_t count;		/* Number of pairs in path */
 	uint32_t score;		/* Path score */
 };
