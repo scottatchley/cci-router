@@ -946,7 +946,7 @@ compare_routes(const void *rr1, const void *rr2)
 	if (!r1) return -1;
 	if (!r2) return 1;
 
-	return r1 - r2;
+	return (r1->id > r2->id) ? 1 : r1->id < r2->id ? -1 : 0;
 }
 
 static inline uint32_t
