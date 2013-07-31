@@ -1063,16 +1063,17 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	ccir_route_t *an = NULL;
 	void *node = NULL;
 
+	parse_pair_id(pair->id, &pair_lo, &pair_hi);
+
 	/* If the route is the same as the pair, we have already handled it */
 	if (pair->id == bn->id) {
 		if (globals->verbose) {
 			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
-					__func__, bn_lo, bn_hi);
+					__func__, pair_lo, pair_hi);
 		}
 		return;
 	}
 
-	parse_pair_id(pair->id, &pair_lo, &pair_hi);
 	parse_pair_id(bn->id, &bn_lo, &bn_hi);
 
 	/* We only want BN... */
@@ -1176,6 +1177,131 @@ routes_prepend_pair(const void *nodep, const VISIT which, const int depth)
 	}
 }
 
+/* Given new pair AB and route NA, add route NB and calculate new paths
+ * NB for each path in NA. */
+static inline void
+append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
+{
+	uint32_t a = 0, b = 0, na_lo = 0, na_hi = 0;
+	uint64_t route_id = 0;
+	ccir_route_t *nb = NULL;
+	void *node = NULL;
+
+	parse_pair_id(pair->id, &a, &b);
+
+	/* If the route is the same as the pair, we have already handled it */
+	if (pair->id == na->id) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
+					__func__, a, b);
+		}
+		return;
+	}
+
+	parse_pair_id(na->id, &na_lo, &na_hi);
+
+	/* We only want NB... */
+	if (na_hi != a) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
+					__func__, na_lo, na_hi);
+		}
+		return;
+	}
+
+	/* Route id for NB... */
+	route_id = pack_pair_id(na_lo, b);
+
+	node = tfind(&route_id, &(globals->topo->routes), compare_routes);
+	if (!node) {
+		uint32_t i = 0;
+
+		/* Route NB does not exist, create it and copy the paths
+		 * from NA and append pair AB. */
+
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: create route for 0x%x_%x",
+					__func__, na_lo, b);
+		}
+
+		nb = calloc(1, sizeof(*nb));
+		if (!nb) {
+			debug(RDB_TOPO, "%s: no memory for new route 0x%x_%x",
+					__func__, na_lo, b);
+			return;
+		}
+		nb->id = route_id;
+		nb->count = na->count;
+		nb->g = globals;
+		nb->paths = calloc(na->count, sizeof(*nb->paths));
+		if (!nb->paths) {
+			debug(RDB_TOPO, "%s: no memory for new route 0x%x_%x paths",
+					__func__, na_lo, b);
+			free(nb);
+			assert(nb->paths);
+			return;
+		}
+
+		/* copy paths from NA and append pair AB */
+		for (i = 0; i < na->count; i++) {
+			ccir_path_t *pnb = nb->paths[i], *pna = na->paths[i];
+
+			pnb = calloc(1, sizeof(*pnb));
+			if (!pnb) {
+				/* TODO */
+				assert(pnb);
+			}
+
+			pnb->count = pna->count + 1;
+			pnb->pairs = calloc(pnb->count, sizeof(uint64_t));
+			if (!pnb->pairs) {
+				/* TODO */
+				assert(pnb->pairs);
+			}
+			pnb->pairs[0] = pair->id;
+			memcpy(&pnb->pairs[1], pna->pairs, pna->count * sizeof(uint64_t));
+			pnb->score = score_path(globals, pnb);
+		}
+	} else {
+		uint64_t *id = *((uint64_t**)node);
+		na = container_of(id, ccir_route_t, id);
+
+		/* The route NB exists, compare its paths to route NA's paths.
+		 * If any are missing (ignoring leading AB pair),
+		 * add to NB's paths. */
+
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: route 0x%x_%x exists",
+					__func__, na_lo, b);
+		}
+		/* TODO */
+	}
+
+	return;
+}
+
+static void
+routes_append_pair(const void *nodep, const VISIT which, const int depth)
+{
+	uint32_t *id = *(uint32_t **) nodep;
+	ccir_route_t *route = container_of(id, ccir_route_t, id);
+	ccir_globals_t *globals = route->g;
+	ccir_pair_t *pair = (ccir_pair_t *)globals->topo->args[0];
+
+	switch (which) {
+	case preorder:
+		break;
+	case postorder:
+		append_pair(globals, pair, route);
+		break;
+	case endorder:
+		break;
+	case leaf:
+		append_pair(globals, pair, route);
+		break;
+	}
+}
+
 /* We have a new pair AB, which may be a new route as well and
  * we need to append, prepend, and join existing routes:
  *
@@ -1272,6 +1398,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	globals->topo->args[0] = (void *)pair;
 
 	twalk(globals->topo->routes, routes_prepend_pair);
+	twalk(globals->topo->routes, routes_append_pair);
 
 	free(globals->topo->args);
 
