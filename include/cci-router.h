@@ -149,10 +149,16 @@ struct ccir_path {
 /* A route has all known, non-looping paths between A and B */
 struct ccir_route {
 	uint64_t id;		/* ((subnetA << 32) | subnetB) where A < B */
-	ccir_path_t *paths;	/* Array of available paths */
+	ccir_path_t **paths;	/* Array of pointers for available paths */
 	uint32_t count;		/* Number of paths sorted on path->score */
 	ccir_globals_t *g;	/* Global state */
 };
+
+/* Routes are sorted using the minimal path scores. */
+typedef enum ccir_metric {
+	CCIR_METRIC_BW = 1,	/* Inverse bandwidth (1000/subnet->rate) */
+	CCIR_METRIC_HOP		/* Hop count */
+} ccir_metric_t;
 
 struct ccir_topo {
 	pthread_rwlock_t lock;	/* Read/write lock */
@@ -160,10 +166,12 @@ struct ccir_topo {
 	uint32_t num_subnets;	/* number of subnets */
 	void *routers;		/* tree of routers sorted in router ID */
 	uint32_t num_routers;	/* number of routers */
-	void *routes;		/* tress of all routes */
 	void *pairs;		/* tree of all directly connected subnets */
 	uint32_t num_pairs;	/* number of pairs */
-	void **args;		/* arguments for tree walk operation */
+	void *routes;		/* tree of all routes */
+	uint32_t num_routes;	/* number of routes */
+	ccir_metric_t metric;	/* Used to rank paths within a route */
+	void **args;		/* Args for tree walks */
 };
 
 struct ccir_globals {
