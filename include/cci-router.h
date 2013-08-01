@@ -174,8 +174,8 @@ struct ccir_topo {
 	uint32_t num_routers;	/* number of routers */
 	void *pairs;		/* tree of all directly connected subnets */
 	uint32_t num_pairs;	/* number of pairs */
-	void *routes;		/* tree of all routes */
-	uint32_t num_routes;	/* number of routes */
+	ccir_route_t **routes;	/* Array of pointers for all routes */
+	uint32_t num_routes;	/* Number of routes */
 	ccir_metric_t metric;	/* Used to rank paths within a route */
 	void **args;		/* Args for tree walks */
 };

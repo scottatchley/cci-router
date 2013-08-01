@@ -1107,6 +1107,33 @@ valid_path(ccir_globals_t *globals, ccir_path_t *path)
 	return ret;
 }
 
+static inline int
+add_route(ccir_globals_t *globals, ccir_route_t *route)
+{
+	int ret = 0;
+	ccir_topo_t *topo = globals->topo;
+	ccir_route_t **routes = NULL;
+
+	topo->num_routes++;
+	routes = realloc(topo->routes, sizeof(route) * topo->num_routes);
+	if (!routes) {
+		uint32_t lo = 0, hi = 0;
+		parse_pair_id(route->id, &lo, &hi);
+		debug(RDB_TOPO, "%s: no memory for topo->routes 0x%x_%x", __func__, lo, hi);
+		topo->num_routes--;
+		ret = ENOMEM;
+		goto out;
+	}
+	topo->routes = routes;
+	topo->routes[topo->num_routes - 1] = route;
+
+	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
+			compare_routes);
+
+out:
+	return ret;
+}
+
 /* Given new pair AB and route BN, add route AN and calculate new paths
  * AN for each path in BN. */
 static inline void
@@ -1115,7 +1142,7 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	uint32_t pair_lo = 0, pair_hi = 0, bn_lo = 0, bn_hi = 0;
 	uint64_t route_id = 0;
 	ccir_route_t *an = NULL;
-	void *node = NULL;
+	ccir_topo_t *topo = globals->topo;
 
 	parse_pair_id(pair->id, &pair_lo, &pair_hi);
 
@@ -1142,9 +1169,10 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	/* Route id for AN... */
 	route_id = pack_pair_id(pair_lo, bn_hi);
 
-	node = tfind(&route_id, &(globals->topo->routes), compare_routes);
-	if (!node) {
-		int loop_found = 0;
+	an = bsearch(&pair->id, topo->routes, topo->num_routes, sizeof(an),
+			compare_routes);
+	if (!an) {
+		int loop_found = 0, ret = 0;
 		uint32_t i = 0;
 
 		/* Route AN does not exist, create it and copy the paths
@@ -1216,10 +1244,10 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 			an->paths = realloc(an->paths, an->count * sizeof(*an->paths));
 			qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
 		}
-	} else {
-		uint64_t *id = *((uint64_t**)node);
-		bn = container_of(id, ccir_route_t, id);
 
+		/* insert in tree */
+		ret = add_route(globals, an);
+	} else {
 		/* The route AN exists, compare its paths to route BN's paths.
 		 * If any are missing (ignoring leading AB pair),
 		 * add to AN's paths. */
@@ -1235,25 +1263,13 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 }
 
 static void
-routes_prepend_pair(const void *nodep, const VISIT which, const int depth)
+routes_prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair)
 {
-	uint32_t *id = *(uint32_t **) nodep;
-	ccir_route_t *route = container_of(id, ccir_route_t, id);
-	ccir_globals_t *globals = route->g;
-	ccir_pair_t *pair = (ccir_pair_t *)globals->topo->args[0];
+	uint32_t i = 0;
+	ccir_topo_t *topo = globals->topo;
 
-	switch (which) {
-	case preorder:
-		break;
-	case postorder:
-		prepend_pair(globals, pair, route);
-		break;
-	case endorder:
-		break;
-	case leaf:
-		prepend_pair(globals, pair, route);
-		break;
-	}
+	for (i = 0; i < topo->num_routes; i++)
+		prepend_pair(globals, pair, topo->routes[i]);
 }
 
 /* Given new pair AB and route NA, add route NB and calculate new paths
@@ -1261,10 +1277,11 @@ routes_prepend_pair(const void *nodep, const VISIT which, const int depth)
 static inline void
 append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 {
+	int ret = 0;
 	uint32_t a = 0, b = 0, na_lo = 0, na_hi = 0;
 	uint64_t route_id = 0;
 	ccir_route_t *nb = NULL;
-	void *node = NULL;
+	ccir_topo_t *topo = globals->topo;
 
 	parse_pair_id(pair->id, &a, &b);
 
@@ -1291,8 +1308,9 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 	/* Route id for NB... */
 	route_id = pack_pair_id(na_lo, b);
 
-	node = tfind(&route_id, &(globals->topo->routes), compare_routes);
-	if (!node) {
+	nb = bsearch(&route_id, topo->routes, topo->num_routes, sizeof(nb),
+			compare_routes);
+	if (!nb) {
 		int loop_found = 0;
 		uint32_t i = 0;
 
@@ -1324,8 +1342,6 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 		/* copy paths from NA and append pair AB */
 		for (i = 0; i < na->count; i++) {
-			int ret = 0;
-
 			ccir_path_t *pnb = nb->paths[i], *pna = na->paths[i];
 
 			pnb = calloc(1, sizeof(*pnb));
@@ -1366,10 +1382,9 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 			nb->paths = realloc(nb->paths, nb->count * sizeof(*nb->paths));
 			qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
 		}
-	} else {
-		uint64_t *id = *((uint64_t**)node);
-		na = container_of(id, ccir_route_t, id);
 
+		ret = add_route(globals, nb);
+	} else {
 		/* The route NB exists, compare its paths to route NA's paths.
 		 * If any are missing (ignoring leading AB pair),
 		 * add to NB's paths. */
@@ -1385,25 +1400,13 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 }
 
 static void
-routes_append_pair(const void *nodep, const VISIT which, const int depth)
+routes_append_pair(ccir_globals_t *globals, ccir_pair_t *pair)
 {
-	uint32_t *id = *(uint32_t **) nodep;
-	ccir_route_t *route = container_of(id, ccir_route_t, id);
-	ccir_globals_t *globals = route->g;
-	ccir_pair_t *pair = (ccir_pair_t *)globals->topo->args[0];
+	uint32_t i = 0;
+	ccir_topo_t *topo = globals->topo;
 
-	switch (which) {
-	case preorder:
-		break;
-	case postorder:
-		append_pair(globals, pair, route);
-		break;
-	case endorder:
-		break;
-	case leaf:
-		append_pair(globals, pair, route);
-		break;
-	}
+	for (i = 0; i < topo->num_routes; i++)
+		append_pair(globals, pair, topo->routes[i]);
 }
 
 /* We have a new pair AB, which may be a new route as well and
@@ -1423,7 +1426,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	uint32_t lo = 0, hi = 0, i = 0;
 	ccir_route_t *route = NULL;
 	ccir_path_t *path = NULL;
-	void *node = NULL;
+	ccir_topo_t *topo = globals->topo;
 
 	parse_pair_id(pair->id, &lo, &hi);
 
@@ -1447,11 +1450,9 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	path->score = score_path(globals, path);
 
 	/* Does route exist? Does it have this pair? */
-	node = tfind(&pair->id, &(globals->topo->routes), compare_routes);
-	if (node) {
-		uint64_t *id = *((uint64_t**)node);
-		route = container_of(id, ccir_route_t, id);
-
+	route = bsearch(&pair->id, topo->routes, topo->num_routes, sizeof(route),
+			compare_routes);
+	if (route) {
 		for (i = 0; i < route->count; i++) {
 			ret = identical_paths(globals, path, route->paths[i]);
 			if (ret == 0) {
@@ -1474,12 +1475,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 		new = 1;
 
 		/* insert in tree */
-		node = tsearch(&route->id, &(globals->topo->routes), compare_routes);
-		if (!node) {
-			ret = ENOMEM;
-			assert(node);
-			goto out;
-		}
+		ret = add_route(globals, route);
 	}
 
 	if (!found) {
@@ -1494,18 +1490,14 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	}
 
 	/* add routes for AB + B* */
-	globals->topo->args = calloc(1, sizeof(void *));
-	if (!globals->topo->args) {
-		/* TODO */
-		assert(globals->topo->args);
-	}
-	globals->topo->args[0] = (void *)pair;
+	routes_prepend_pair(globals, pair);
 
-	twalk(globals->topo->routes, routes_prepend_pair);
-	twalk(globals->topo->routes, routes_append_pair);
-	/* TODO join routes */
+	/* add routes for *A + AB */
+	routes_append_pair(globals, pair);
 
-	free(globals->topo->args);
+	/* TODO join routes *A + AB + B* */
+
+	free(topo->args);
 
 out:
 	if (ret) {
