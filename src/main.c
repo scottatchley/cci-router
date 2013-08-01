@@ -1053,6 +1053,60 @@ identical_paths(ccir_globals_t *globals, ccir_path_t *a, ccir_path_t *b)
 	return 0;
 }
 
+/* A valid path is one or more pairs that form a path (route) between subnet A
+ * and subnet B without looping.
+ *
+ * For example, a path for route AB could include: AG, GE, EK, and KB. This path
+ * traverses subnets AGEKB. Because we store pair IDs in low/high order,
+ * the pairs are would be AG,EG,EK, and BK.
+ *
+ * Return 0 on success, errno on error
+ */
+static inline int
+valid_path(ccir_globals_t *globals, ccir_path_t *path)
+{
+	int ret = 0;
+	uint32_t *router_ids = NULL, i = 0, lo = 0, hi = 0;
+
+	router_ids = calloc(path->count + 1, sizeof(*router_ids));
+	if (!router_ids) {
+		assert(router_ids);
+		return ENOMEM;
+	}
+
+	for (i = 0; i < path->count; i++) {
+		uint32_t last = 0;
+
+		parse_pair_id(path->pairs[i], &lo, &hi);
+
+		if (i == 0) {
+			router_ids[0] = lo;
+			router_ids[1] = hi;
+			last = hi;
+		} else {
+			uint32_t tmp = 0, j = 0;
+
+			if (hi == last) {
+				tmp = lo;
+				lo = hi;
+				hi = tmp;
+			}
+			last = hi;
+
+			for (j = 0; j < (i + 1); j++) {
+				if (router_ids[j] == hi) {
+					ret = -1;
+					break;
+				}
+			}
+			if (ret)
+				break;
+		}
+	}
+
+	return ret;
+}
+
 /* Given new pair AB and route BN, add route AN and calculate new paths
  * AN for each path in BN. */
 static inline void
@@ -1090,6 +1144,7 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 	node = tfind(&route_id, &(globals->topo->routes), compare_routes);
 	if (!node) {
+		int loop_found = 0;
 		uint32_t i = 0;
 
 		/* Route AN does not exist, create it and copy the paths
@@ -1119,6 +1174,8 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		/* copy paths from BN and prepend pair AB */
 		for (i = 0; i < bn->count; i++) {
+			int ret = 0;
+
 			ccir_path_t *pan = an->paths[i], *pbn = bn->paths[i];
 
 			pan = calloc(1, sizeof(*pan));
@@ -1136,6 +1193,28 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 			pan->pairs[0] = pair->id;
 			memcpy(&pan->pairs[1], pbn->pairs, pbn->count * sizeof(uint64_t));
 			pan->score = score_path(globals, pan);
+
+			ret = valid_path(globals, pan);
+			if (ret) {
+				pan->score = (uint32_t) -1;
+				loop_found = 1;
+			}
+		}
+
+		qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
+
+		if (loop_found) {
+			for (i = (an->count - 1); an->paths[i]->score == (uint32_t) -1; i--) {
+				ccir_path_t *pan = an->paths[i];
+
+				if (pan->score == (uint32_t) -1) {
+					free(pan->pairs);
+					free(pan);
+					an->count--;
+				}
+			}
+			an->paths = realloc(an->paths, an->count * sizeof(*an->paths));
+			qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
 		}
 	} else {
 		uint64_t *id = *((uint64_t**)node);
@@ -1214,6 +1293,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 	node = tfind(&route_id, &(globals->topo->routes), compare_routes);
 	if (!node) {
+		int loop_found = 0;
 		uint32_t i = 0;
 
 		/* Route NB does not exist, create it and copy the paths
@@ -1244,6 +1324,8 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 		/* copy paths from NA and append pair AB */
 		for (i = 0; i < na->count; i++) {
+			int ret = 0;
+
 			ccir_path_t *pnb = nb->paths[i], *pna = na->paths[i];
 
 			pnb = calloc(1, sizeof(*pnb));
@@ -1261,6 +1343,28 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 			memcpy(pnb->pairs, pna->pairs, pna->count * sizeof(uint64_t));
 			pnb->pairs[pnb->count - 1] = pair->id;
 			pnb->score = score_path(globals, pnb);
+
+			ret = valid_path(globals, pnb);
+			if (ret) {
+				pnb->score = (uint32_t) -1;
+				loop_found = 1;
+			}
+		}
+
+		qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
+
+		if (loop_found) {
+			for (i = (nb->count - 1); nb->paths[i]->score == (uint32_t) -1; i--) {
+				ccir_path_t *pnb = nb->paths[i];
+
+				if (pnb->score == (uint32_t) -1) {
+					free(pnb->pairs);
+					free(pnb);
+					nb->count--;
+				}
+			}
+			nb->paths = realloc(nb->paths, nb->count * sizeof(*nb->paths));
+			qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
 		}
 	} else {
 		uint64_t *id = *((uint64_t**)node);
@@ -1399,6 +1503,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 
 	twalk(globals->topo->routes, routes_prepend_pair);
 	twalk(globals->topo->routes, routes_append_pair);
+	/* TODO join routes */
 
 	free(globals->topo->args);
 
