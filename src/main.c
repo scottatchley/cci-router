@@ -996,10 +996,68 @@ score_path_hop(ccir_globals_t *globals, ccir_path_t *path)
 	return path->count;
 }
 
+/* A valid path is one or more pairs that form a path (route) between subnet A
+ * and subnet B without looping.
+ *
+ * For example, a path for route AB could include: AG, GE, EK, and KB. This path
+ * traverses subnets AGEKB. Because we store pair IDs in low/high order,
+ * the pairs are would be AG,EG,EK, and BK.
+ *
+ * Return 0 on success, errno on error
+ */
+static inline int
+valid_path(ccir_globals_t *globals, ccir_path_t *path)
+{
+	int ret = 0;
+	uint32_t *router_ids = NULL, i = 0, lo = 0, hi = 0;
+
+	router_ids = calloc(path->count + 1, sizeof(*router_ids));
+	if (!router_ids) {
+		assert(router_ids);
+		return ENOMEM;
+	}
+
+	for (i = 0; i < path->count; i++) {
+		uint32_t last = 0;
+
+		parse_pair_id(path->pairs[i], &lo, &hi);
+
+		if (i == 0) {
+			router_ids[0] = lo;
+			router_ids[1] = hi;
+			last = hi;
+		} else {
+			uint32_t tmp = 0, j = 0;
+
+			if (hi == last) {
+				tmp = lo;
+				lo = hi;
+				hi = tmp;
+			}
+			last = hi;
+
+			for (j = 0; j < (i + 1); j++) {
+				if (router_ids[j] == hi) {
+					ret = EINVAL;
+					break;
+				}
+			}
+			if (ret)
+				break;
+		}
+	}
+
+	return ret;
+}
+
 static inline uint32_t
 score_path(ccir_globals_t *globals, ccir_path_t *path)
 {
+	int ret = 0;
 	uint32_t score = 0;
+
+	ret = valid_path(globals, path);
+	if (ret) return CCIR_INVALID_PATH;
 
 	switch (globals->topo->metric) {
 		case CCIR_METRIC_BW:
@@ -1053,60 +1111,6 @@ identical_paths(ccir_globals_t *globals, ccir_path_t *a, ccir_path_t *b)
 	return 0;
 }
 
-/* A valid path is one or more pairs that form a path (route) between subnet A
- * and subnet B without looping.
- *
- * For example, a path for route AB could include: AG, GE, EK, and KB. This path
- * traverses subnets AGEKB. Because we store pair IDs in low/high order,
- * the pairs are would be AG,EG,EK, and BK.
- *
- * Return 0 on success, errno on error
- */
-static inline int
-valid_path(ccir_globals_t *globals, ccir_path_t *path)
-{
-	int ret = 0;
-	uint32_t *router_ids = NULL, i = 0, lo = 0, hi = 0;
-
-	router_ids = calloc(path->count + 1, sizeof(*router_ids));
-	if (!router_ids) {
-		assert(router_ids);
-		return ENOMEM;
-	}
-
-	for (i = 0; i < path->count; i++) {
-		uint32_t last = 0;
-
-		parse_pair_id(path->pairs[i], &lo, &hi);
-
-		if (i == 0) {
-			router_ids[0] = lo;
-			router_ids[1] = hi;
-			last = hi;
-		} else {
-			uint32_t tmp = 0, j = 0;
-
-			if (hi == last) {
-				tmp = lo;
-				lo = hi;
-				hi = tmp;
-			}
-			last = hi;
-
-			for (j = 0; j < (i + 1); j++) {
-				if (router_ids[j] == hi) {
-					ret = -1;
-					break;
-				}
-			}
-			if (ret)
-				break;
-		}
-	}
-
-	return ret;
-}
-
 static inline int
 add_route(ccir_globals_t *globals, ccir_route_t *route)
 {
@@ -1132,6 +1136,35 @@ add_route(ccir_globals_t *globals, ccir_route_t *route)
 
 out:
 	return ret;
+}
+
+static inline void
+del_route(ccir_globals_t *globals, ccir_route_t *route)
+{
+	ccir_topo_t *topo = globals->topo;
+	ccir_route_t **routes = NULL;
+
+	if (globals->verbose) {
+		uint32_t lo = 0, hi = 0;
+
+		parse_pair_id(route->id, &lo, &hi);
+		debug(RDB_TOPO, "%s: removing route 0x%x_%x", __func__, lo, hi);
+	}
+
+	/* Move route to end of array */
+	route->id = ~((uint64_t)0);
+	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
+			compare_routes);
+
+	topo->num_routes--;
+	routes = realloc(topo->routes, sizeof(route) * topo->num_routes);
+	if (routes)
+		topo->routes = routes;
+
+	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
+			compare_routes);
+
+	return;
 }
 
 /* Given new pair AB and route BN, add route AN and calculate new paths
@@ -1202,15 +1235,14 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		/* copy paths from BN and prepend pair AB */
 		for (i = 0; i < bn->count; i++) {
-			int ret = 0;
-
-			ccir_path_t *pan = an->paths[i], *pbn = bn->paths[i];
+			ccir_path_t *pan = NULL, *pbn = bn->paths[i];
 
 			pan = calloc(1, sizeof(*pan));
 			if (!pan) {
 				/* TODO */
 				assert(pan);
 			}
+			an->paths[i] = pan;
 
 			pan->count = pbn->count + 1;
 			pan->pairs = calloc(pan->count, sizeof(uint64_t));
@@ -1221,18 +1253,15 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 			pan->pairs[0] = pair->id;
 			memcpy(&pan->pairs[1], pbn->pairs, pbn->count * sizeof(uint64_t));
 			pan->score = score_path(globals, pan);
-
-			ret = valid_path(globals, pan);
-			if (ret) {
-				pan->score = (uint32_t) -1;
+			if (pan->score == CCIR_INVALID_PATH)
 				loop_found = 1;
-			}
 		}
 
 		qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
 
 		if (loop_found) {
-			for (i = (an->count - 1); an->paths[i]->score == (uint32_t) -1; i--) {
+			for (i = (an->count - 1);
+					an->paths[i]->score == CCIR_INVALID_PATH; i--) {
 				ccir_path_t *pan = an->paths[i];
 
 				if (pan->score == (uint32_t) -1) {
@@ -1260,16 +1289,6 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	}
 
 	return;
-}
-
-static void
-routes_prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair)
-{
-	uint32_t i = 0;
-	ccir_topo_t *topo = globals->topo;
-
-	for (i = 0; i < topo->num_routes; i++)
-		prepend_pair(globals, pair, topo->routes[i]);
 }
 
 /* Given new pair AB and route NA, add route NB and calculate new paths
@@ -1359,18 +1378,15 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 			memcpy(pnb->pairs, pna->pairs, pna->count * sizeof(uint64_t));
 			pnb->pairs[pnb->count - 1] = pair->id;
 			pnb->score = score_path(globals, pnb);
-
-			ret = valid_path(globals, pnb);
-			if (ret) {
-				pnb->score = (uint32_t) -1;
+			if (pnb->score == CCIR_INVALID_PATH)
 				loop_found = 1;
-			}
 		}
 
 		qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
 
 		if (loop_found) {
-			for (i = (nb->count - 1); nb->paths[i]->score == (uint32_t) -1; i--) {
+			for (i = (nb->count - 1);
+					nb->paths[i]->score == CCIR_INVALID_PATH; i--) {
 				ccir_path_t *pnb = nb->paths[i];
 
 				if (pnb->score == (uint32_t) -1) {
@@ -1399,14 +1415,158 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 	return;
 }
 
+/* Given new pair AB and routes MA and BN, add route MN and calculate new paths
+ * MN for each path in MA + AB + BN. */
 static void
-routes_append_pair(ccir_globals_t *globals, ccir_pair_t *pair)
+join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
+		ccir_route_t *ma, ccir_route_t *bn)
 {
+	int ret = 0;
+	uint32_t pair_lo = 0, pair_hi = 0, ma_lo = 0, ma_hi = 0, bn_lo = 0, bn_hi = 0;
 	uint32_t i = 0;
+	uint64_t mn_id = 0;
+	ccir_route_t *mn = NULL;
 	ccir_topo_t *topo = globals->topo;
+	ccir_path_t *pma = NULL, *pbn = NULL, *pmn = NULL;
 
-	for (i = 0; i < topo->num_routes; i++)
-		append_pair(globals, pair, topo->routes[i]);
+	parse_pair_id(pair_id, &pair_lo, &pair_hi);
+	parse_pair_id(ma->id, &ma_lo, &ma_hi);
+	parse_pair_id(bn->id, &bn_lo, &bn_hi);
+
+	if (ma_hi != pair_lo) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: route 0x%x_%x does not connect to 0x%x_%x",
+				__func__, ma_lo, ma_hi, pair_lo, pair_hi);
+		}
+		return;
+	}
+
+	if (pair_hi != bn_lo) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: route 0x%x_%x does not connect to 0x%x_%x",
+				__func__, pair_lo, pair_hi, bn_lo, bn_hi);
+		}
+		return;
+	}
+	if (globals->verbose) {
+		debug(RDB_TOPO, "%s: checking for route 0x%x_%x", __func__,
+			ma_lo, bn_hi);
+	}
+
+	mn_id = pack_pair_id(ma_lo, bn_hi);
+	mn = bsearch(&mn_id, topo->routes, topo->num_routes, sizeof(mn), compare_routes);
+	if (!mn) {
+		/* new route, create it */
+		mn = calloc(1, sizeof(*mn));
+		if (!mn) {
+			debug(RDB_TOPO, "%s: no memory for the new route 0x%x_%x",
+				__func__, ma_lo, bn_hi);
+			return;
+		}
+		mn->id = mn_id;
+		ret = add_route(globals, mn);
+		if (ret) {
+			free(mn);
+			return;
+		}
+
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: joining route 0x%x_%x to 0x%x_%x to 0x%x_%x "
+				"to create new route 0x%x_%x", __func__, ma_lo, ma_hi,
+				pair_lo, pair_hi, bn_lo, bn_hi, ma_lo, bn_hi);
+		}
+	} else {
+		if (globals->verbose)
+			debug(RDB_TOPO, "%s: found route 0x%x_%x", __func__, ma_lo, bn_hi);
+	}
+
+	/* combine and validate the paths */
+	for (i = 0; i < ma->count; i++) {
+		uint32_t j = 0;
+
+		pma = ma->paths[i];
+
+		for (j = 0; j < bn->count; j++) {
+			pbn = bn->paths[j];
+
+			pmn = calloc(1, sizeof(*pmn));
+			if (!pmn) {
+				debug(RDB_TOPO, "%s: no memory for new path for x0%x_%x",
+					__func__, ma_lo, bn_hi);
+				continue;
+			}
+			/* Number of pairs if MA count + AB + BN count */
+			pmn->count = pma->count + 1 + pbn->count;
+			pmn->pairs = calloc(pmn->count, sizeof(*pmn->pairs));
+			if (!pmn->pairs) {
+				debug(RDB_TOPO, "%s: no memory for new path's pairs for x0%x_%x",
+					__func__, ma_lo, bn_hi);
+				free(pmn);
+				continue;
+			}
+			/* concatenate MA + AB + BN */
+			memcpy(pmn->pairs, pma->pairs, pma->count * sizeof(*pmn->pairs));
+			pmn->pairs[pma->count] = pair_id;
+			memcpy(&pmn->pairs[pma->count + 1], pbn->pairs,
+					pbn->count * sizeof(*pmn->pairs));
+			pmn->score = score_path(globals, pmn);
+			if (pmn->score == CCIR_INVALID_PATH) {
+				if (globals->verbose) {
+					debug(RDB_TOPO, "%s: freeing invalid path joining "
+						"ma[%u] bn[%u]", __func__, i, j);
+				}
+				free(pmn->pairs);
+				free(pmn);
+				continue;
+			} else {
+				int add_path = 1;
+				uint32_t k = 0;
+
+				/* check if the path already exists in MN */
+				for (k = 0; k < mn->count; k++) {
+					ccir_path_t *pk = mn->paths[k];
+
+					ret = identical_paths(globals, pmn, pk);
+					if (ret == 0) {
+						add_path = 0;
+						free(pmn->pairs);
+						free(pmn);
+						break;
+					}
+				}
+				if (add_path) {
+					ccir_path_t **paths = NULL;
+
+					mn->count++;
+					paths = realloc(mn->paths,
+							sizeof(*mn->paths) * mn->count);
+
+					if (!paths) {
+						mn--;
+						free(pmn->pairs);
+						free(pmn);
+						debug(RDB_TOPO, "%s: no memory for new path",
+								__func__);
+						continue;
+					}
+					if (globals->verbose) {
+						debug(RDB_TOPO, "%s: adding new path", __func__);
+					}
+					mn->paths = paths;
+					qsort(mn->paths, mn->count, sizeof(pmn), compare_paths);
+				}
+			}
+		}
+	}
+
+	if (mn->count == 0) {
+		/* This route has no valid paths, remove and free it */
+		del_route(globals, mn);
+		free(mn->paths);
+		free(mn);
+	}
+
+	return;
 }
 
 /* We have a new pair AB, which may be a new route as well and
@@ -1489,15 +1649,26 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 		free(path);
 	}
 
-	/* add routes for AB + B* */
-	routes_prepend_pair(globals, pair);
+	for (i = 0; i < topo->num_routes; i++) {
+		uint32_t j = 0;
+		ccir_route_t *route = topo->routes[i];
 
-	/* add routes for *A + AB */
-	routes_append_pair(globals, pair);
+		/* add routes for AB + B* */
+		prepend_pair(globals, pair, route);
 
-	/* TODO join routes *A + AB + B* */
+		/* add routes for *A + AB */
+		append_pair(globals, pair, route);
 
-	free(topo->args);
+		for (j = 0; j < topo->num_routes; j++) {
+			ccir_route_t *route2 = topo->routes[j];
+
+			if (i == j)
+				continue;
+
+			/* join routes *A + AB + B* */
+			join_ma_ab_bn(globals, pair->id, route, route2);
+		}
+	}
 
 out:
 	if (ret) {

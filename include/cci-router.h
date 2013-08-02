@@ -152,6 +152,8 @@ struct ccir_path {
 	uint32_t score;		/* Path score */
 };
 
+#define CCIR_INVALID_PATH	((uint32_t) -1)
+
 /* A route has all known, non-looping paths between A and B */
 struct ccir_route {
 	uint64_t id;		/* ((subnetA << 32) | subnetB) where A < B */
@@ -177,7 +179,6 @@ struct ccir_topo {
 	ccir_route_t **routes;	/* Array of pointers for all routes */
 	uint32_t num_routes;	/* Number of routes */
 	ccir_metric_t metric;	/* Used to rank paths within a route */
-	void **args;		/* Args for tree walks */
 };
 
 struct ccir_globals {
