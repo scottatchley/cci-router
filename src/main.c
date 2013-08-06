@@ -1131,8 +1131,7 @@ add_route(ccir_globals_t *globals, ccir_route_t *route)
 	topo->routes = routes;
 	topo->routes[topo->num_routes - 1] = route;
 
-	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
-			compare_routes);
+	qsort(topo->routes, topo->num_routes, sizeof(route), compare_routes);
 
 out:
 	return ret;
@@ -1153,16 +1152,14 @@ del_route(ccir_globals_t *globals, ccir_route_t *route)
 
 	/* Move route to end of array */
 	route->id = ~((uint64_t)0);
-	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
-			compare_routes);
+	qsort(topo->routes, topo->num_routes, sizeof(route), compare_routes);
 
 	topo->num_routes--;
 	routes = realloc(topo->routes, sizeof(route) * topo->num_routes);
 	if (routes)
 		topo->routes = routes;
 
-	qsort(topo->routes, topo->num_routes, sizeof(route) * topo->num_routes,
-			compare_routes);
+	qsort(topo->routes, topo->num_routes, sizeof(route), compare_routes);
 
 	return;
 }
