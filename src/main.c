@@ -357,6 +357,10 @@ handle_peer_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t 
 					peer->state = CCIR_PEER_INIT;
 			}
 		}
+		else {
+			debug(RDB_PEER, "%s: uri \"%s\" does not match "
+					"peer->uri \"%s\"", __func__, uri, peer->uri);
+		}
 	}
 
 	if (!found) {
@@ -1816,15 +1820,15 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	 *   if P->id != router
 	 *       send RIR
 	 */
-	hdr->net = htonl(hdr->net);
-	rir->instance = ccir_htonll(rir->instance);
-	rir->router = htonl(rir->router);
-	rir->as = htonl(rir->as);
-	rir->subnet[0].id = htonl(rir->subnet[0].id);
-	rir->subnet[0].rate = htons(rir->subnet[0].rate);
-
-	{
+	if (new_router || new_subnet) {
 		uint32_t i;
+
+		hdr->net = htonl(hdr->net);
+		rir->instance = ccir_htonll(rir->instance);
+		rir->router = htonl(rir->router);
+		rir->as = htonl(rir->as);
+		rir->subnet[0].id = htonl(rir->subnet[0].id);
+		rir->subnet[0].rate = htons(rir->subnet[0].rate);
 
 		for (i = 0; i < globals->ep_cnt; i++) {
 			ccir_ep_t *e = globals->eps[i];
@@ -2491,7 +2495,7 @@ open_endpoints(ccir_globals_t *globals)
 
 		MurmurHash3_x86_32(ep->uri, strlen(ep->uri), hash, (void *) &hash);
 
-		if (globals->verbose > 2)
+		if (globals->verbose)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
 					ep->uri, d->name);
 	}
