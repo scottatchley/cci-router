@@ -1812,6 +1812,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
 	int ret = 0, new_router = 0, new_subnet = 0;
+	uint32_t i = 0;
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 	ccir_rir_data_t *rir = (ccir_rir_data_t*)hdr->rir.data;
 	ccir_router_t *router = NULL;
@@ -1869,26 +1870,24 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	 *   if P->id != router
 	 *       send RIR
 	 */
-	if (new_router || new_subnet) {
-		uint32_t i;
 
-		hdr->net = htonl(hdr->net);
-		rir->instance = ccir_htonll(rir->instance);
-		rir->router = htonl(rir->router);
-		rir->as = htonl(rir->as);
-		rir->subnet[0].id = htonl(rir->subnet[0].id);
-		rir->subnet[0].rate = htons(rir->subnet[0].rate);
+	hdr->net = htonl(hdr->net);
+	rir->instance = ccir_htonll(rir->instance);
+	rir->router = htonl(rir->router);
+	rir->as = htonl(rir->as);
+	rir->subnet[0].id = htonl(rir->subnet[0].id);
+	rir->subnet[0].rate = htons(rir->subnet[0].rate);
 
-		for (i = 0; i < globals->ep_cnt; i++) {
-			ccir_ep_t *e = globals->eps[i];
-			ccir_peer_t **p = NULL;
+	for (i = 0; i < globals->ep_cnt; i++) {
+		ccir_ep_t *e = globals->eps[i];
+		ccir_peer_t **p = NULL;
 
-			for (p = e->peers; *p; p++) {
-				if ((*p)->c && (*p)->id && (*p)->id != ntohl(rir->router)) {
-					debug(RDB_PEER, "%s: EP %p: forwarding RIR to %s",
-						__func__, (void*)p, (*p)->uri);
-					cci_send((*p)->c, event->recv.ptr, event->recv.len, NULL, CCI_FLAG_SILENT);
-				}
+		for (p = e->peers; *p; p++) {
+			if (e == ep) continue;
+			if ((*p)->c && (*p)->id && (*p)->id != ntohl(rir->router)) {
+				debug(RDB_PEER, "%s: EP %p: forwarding RIR to %s",
+					__func__, (void*)p, (*p)->uri);
+				cci_send((*p)->c, event->recv.ptr, event->recv.len, NULL, CCI_FLAG_SILENT);
 			}
 		}
 	}
