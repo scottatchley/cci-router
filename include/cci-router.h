@@ -141,13 +141,12 @@ struct ccir_pair {
 	ccir_globals_t *g;	/* Global state */
 };
 
-/* A path is one or more pairs that form a path (route) between subnet A and subnet B.
- * For example: AG, GE, EK, KB traverses subnets AGEKB and would be stored as
- * AG,EG,EK,BK since pair IDs use lo/hi naming.
- * The count is the number of pairs (number of subnets - 1).
+/* A path is two or more subnets that form a path (route) between subnet A and subnet B.
+ * For example: pairs AG, GE, EK, KB traverses subnets AGEKB.
+ * The count is the number of subnets.
  * The score is the comparison metric (e.g. inverse bandwidth, hop count, etc. ) */
 struct ccir_path {
-	uint64_t *pairs;	/* Array of directly connected pair IDs */
+	uint32_t *subnets;	/* Array of directly connected subnet IDs */
 	uint32_t count;		/* Number of pairs in path */
 	uint32_t score;		/* Path score */
 };

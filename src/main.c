@@ -959,27 +959,11 @@ score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 	uint32_t i = 0, score = 0;
 
 	for (i = 0; i < path->count; i++) {
-		uint32_t lo = 0, hi = 0;
-		uint64_t pair_id = path->pairs[i];
+		uint32_t subnet_id = path->subnets[i];
 		void *node = NULL;
 		ccir_subnet_t *subnet = NULL;
 
-		parse_pair_id(pair_id, &lo, &hi);
-
-		if (i == 0) {
-			node = tfind(&lo, &(globals->topo->subnets), compare_u32);
-			if (node) {
-				uint32_t *id = *((uint32_t**)node);
-				subnet = container_of(id, ccir_subnet_t, id);
-
-				score = 1000 / subnet->rate;
-			} else {
-				/* TODO */
-				assert(node);
-			}
-		}
-
-		node = tfind(&hi, &(globals->topo->subnets), compare_u32);
+		node = tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
 		if (node) {
 			uint32_t *id = *((uint32_t**)node);
 			subnet = container_of(id, ccir_subnet_t, id);
@@ -1013,44 +997,50 @@ static inline int
 valid_path(ccir_globals_t *globals, ccir_path_t *path)
 {
 	int ret = 0;
-	uint32_t *router_ids = NULL, i = 0, lo = 0, hi = 0;
+	uint32_t i = 0, a = 0, b = 0;
+	uint64_t ab = 0;
+	void *node = NULL;
 
-	router_ids = calloc(path->count + 1, sizeof(*router_ids));
-	if (!router_ids) {
-		assert(router_ids);
-		return ENOMEM;
+	if (globals->verbose) {
+		debug(RDB_TOPO, "%s: validating path %p count %u", __func__,
+				(void*)path, path->count);
+		for (i = 0; i < path->count; i++)
+			debug(RDB_TOPO, "%s:    0x%x", __func__, path->subnets[i]);
 	}
 
-	for (i = 0; i < path->count; i++) {
-		uint32_t last = 0;
+	a = path->subnets[0];
 
-		parse_pair_id(path->pairs[i], &lo, &hi);
+	for (i = 1; i < path->count; i++) {
+		uint32_t j = 0;
 
-		if (i == 0) {
-			router_ids[0] = lo;
-			router_ids[1] = hi;
-			last = hi;
-		} else {
-			uint32_t tmp = 0, j = 0;
+		b = path->subnets[i];
 
-			if (hi == last) {
-				tmp = lo;
-				lo = hi;
-				hi = tmp;
-			}
-			last = hi;
-
-			for (j = 0; j < (i + 1); j++) {
-				if (router_ids[j] == hi) {
-					ret = EINVAL;
-					break;
+		for (j = 0; j < i; j++) {
+			if (b == path->subnets[j]) {
+				if (globals->verbose) {
+					debug(RDB_TOPO, "%s: path loops on subnet 0x%x",
+							__func__, b);
 				}
+
+				ret = EINVAL;
+				goto out;
 			}
-			if (ret)
-				break;
 		}
+
+		ab = pack_pair_id(a, b);
+
+		node = tfind(&ab, &(globals->topo->pairs), compare_u64);
+		if (!node) {
+			if (globals->verbose)
+				debug(RDB_TOPO, "%s: subnets 0x%x and 0x%x not directly"
+						"routed", __func__, a, b);
+			ret = EINVAL;
+			goto out;
+		}
+		a = b;
 	}
 
+out:
 	return ret;
 }
 
@@ -1108,7 +1098,7 @@ identical_paths(ccir_globals_t *globals, ccir_path_t *a, ccir_path_t *b)
 	if (a->count != b->count) return -1;
 
 	for (i = 0; i < a->count; i++) {
-		if (a->pairs[i] != b->pairs[i])
+		if (a->subnets[i] != b->subnets[i])
 			return -1;
 	}
 
@@ -1123,8 +1113,6 @@ print_route(ccir_globals_t *globals, ccir_route_t *route)
 	parse_pair_id(route->id, &lo, &hi);
 	debug(RDB_TOPO, "    route 0x%x_%x count %u:", lo, hi, route->count);
 
-	if (!route->count) return;
-
 	for (i = 0; i < route->count; i++) {
 		uint32_t j = 0;
 		ccir_path_t *path = route->paths[i];
@@ -1133,8 +1121,7 @@ print_route(ccir_globals_t *globals, ccir_route_t *route)
 				i, path->count, path->score);
 
 		for (j = 0; j < path->count; j++) {
-			parse_pair_id(path->pairs[j], &lo, &hi);
-			debug(RDB_TOPO, "            0x%x_%x ", lo, hi);
+			debug(RDB_TOPO, "            0x%x", path->subnets[j]);
 		}
 	}
 
@@ -1212,18 +1199,18 @@ del_route(ccir_globals_t *globals, ccir_route_t *route)
 static inline void
 prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 {
-	uint32_t pair_lo = 0, pair_hi = 0, bn_lo = 0, bn_hi = 0;
-	uint64_t route_id = 0;
+	uint32_t a = 0, b = 0, bn_lo = 0, bn_hi = 0;
+	uint64_t route_id = 0, ab = pair->id;
 	ccir_route_t *an = NULL;
 	ccir_topo_t *topo = globals->topo;
 
-	parse_pair_id(pair->id, &pair_lo, &pair_hi);
+	parse_pair_id(pair->id, &a, &b);
 
 	/* If the route is the same as the pair, we have already handled it */
 	if (pair->id == bn->id) {
 		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
-					__func__, pair_lo, pair_hi);
+			debug(RDB_TOPO, "%s: ignoring identical route 0x%x_%x",
+					__func__, a, b);
 		}
 		return;
 	}
@@ -1231,18 +1218,27 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	parse_pair_id(bn->id, &bn_lo, &bn_hi);
 
 	/* We only want BN... */
-	if (bn_lo != pair_hi) {
+	if (bn_lo != b && bn_lo != a) {
 		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
-					__func__, bn_lo, bn_hi);
+			debug(RDB_TOPO, "%s: cannot prepend pair 0x%x_%x to "
+					"route 0x%x_%x", __func__, a, b,
+					bn_lo, bn_hi);
 		}
 		return;
 	}
 
-	/* Route id for AN... */
-	route_id = pack_pair_id(pair_lo, bn_hi);
+	if (bn_lo == a) {
+		uint32_t tmp = a;
 
-	an = bsearch(&pair->id, topo->routes, topo->num_routes, sizeof(an),
+		a = b;
+		b = tmp;
+		ab = pack_pair_id(a, b);
+	}
+
+	/* Route id for AN... */
+	route_id = pack_pair_id(a, bn_hi);
+
+	an = bsearch(&route_id, topo->routes, topo->num_routes, sizeof(an),
 			compare_routes);
 	if (!an) {
 		int loop_found = 0, ret = 0;
@@ -1253,13 +1249,13 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		if (globals->verbose) {
 			debug(RDB_TOPO, "%s: create route for 0x%x_%x",
-					__func__, pair_lo, bn_hi);
+					__func__, a, bn_hi);
 		}
 
 		an = calloc(1, sizeof(*an));
 		if (!an) {
 			debug(RDB_TOPO, "%s: no memory for new route 0x%x_%x",
-					__func__, pair_lo, bn_hi);
+					__func__, a, bn_hi);
 			return;
 		}
 		an->id = route_id;
@@ -1268,7 +1264,7 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 		an->paths = calloc(bn->count, sizeof(*an->paths));
 		if (!an->paths) {
 			debug(RDB_TOPO, "%s: no memory for new route 0x%x_%x paths",
-					__func__, pair_lo, bn_hi);
+					__func__, a, bn_hi);
 			free(an);
 			return;
 		}
@@ -1285,13 +1281,13 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 			an->paths[i] = pan;
 
 			pan->count = pbn->count + 1;
-			pan->pairs = calloc(pan->count, sizeof(uint64_t));
-			if (!pan->pairs) {
+			pan->subnets = calloc(pan->count, sizeof(uint32_t));
+			if (!pan->subnets) {
 				/* TODO */
-				assert(pan->pairs);
+				assert(pan->subnets);
 			}
-			pan->pairs[0] = pair->id;
-			memcpy(&pan->pairs[1], pbn->pairs, pbn->count * sizeof(uint64_t));
+			pan->subnets[0] = a;
+			memcpy(&pan->subnets[1], pbn->subnets, pbn->count * sizeof(uint32_t));
 			pan->score = score_path(globals, pan);
 			if (pan->score == CCIR_INVALID_PATH)
 				loop_found = 1;
@@ -1299,23 +1295,32 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
 
+again:
 		if (loop_found) {
-			for (i = (an->count - 1);
-					an->paths[i]->score == CCIR_INVALID_PATH; i--) {
+			uint32_t bad = 0;
+			for (i = 0; i < an->count; i++) {
 				ccir_path_t *pan = an->paths[i];
 
 				if (pan->score == (uint32_t) -1) {
-					free(pan->pairs);
+					free(pan->subnets);
 					free(pan);
 					an->count--;
+					bad = 1;
 				}
 			}
 			an->paths = realloc(an->paths, an->count * sizeof(*an->paths));
 			qsort(an->paths, an->count, sizeof(*an->paths), compare_paths);
+			if (bad)
+				goto again;
 		}
 
 		/* insert in tree */
-		ret = add_route(globals, an);
+		if (an->count) {
+			ret = add_route(globals, an);
+		} else {
+			free(an->paths);
+			free(an);
+		}
 	} else {
 		/* The route AN exists, compare its paths to route BN's paths.
 		 * If any are missing (ignoring leading AB pair),
@@ -1323,10 +1328,11 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		if (globals->verbose) {
 			debug(RDB_TOPO, "%s: route 0x%x_%x exists",
-					__func__, pair_lo, bn_hi);
+					__func__, a, bn_hi);
 		}
 		/* TODO */
 	}
+
 	print_routes(globals);
 
 	return;
@@ -1339,7 +1345,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 {
 	int ret = 0;
 	uint32_t a = 0, b = 0, na_lo = 0, na_hi = 0;
-	uint64_t route_id = 0;
+	uint64_t route_id = 0, ab = pair->id;
 	ccir_route_t *nb = NULL;
 	ccir_topo_t *topo = globals->topo;
 
@@ -1348,7 +1354,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 	/* If the route is the same as the pair, we have already handled it */
 	if (pair->id == na->id) {
 		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
+			debug(RDB_TOPO, "%s: ignoring identical route 0x%x_%x",
 					__func__, a, b);
 		}
 		return;
@@ -1357,12 +1363,21 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 	parse_pair_id(na->id, &na_lo, &na_hi);
 
 	/* We only want NB... */
-	if (na_hi != a) {
+	if (na_hi != a && na_hi != b) {
 		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: ignoring route 0x%x_%x",
-					__func__, na_lo, na_hi);
+			debug(RDB_TOPO, "%s: cannot append pair 0x%x_%x to "
+					"route 0x%x_%x", __func__, a, b,
+					na_lo, na_hi);
 		}
 		return;
+	}
+
+	if (na_hi == b) {
+		uint32_t tmp = b;
+
+		b = a;
+		a = tmp;
+		ab = pack_pair_id(a, b);
 	}
 
 	/* Route id for NB... */
@@ -1412,13 +1427,13 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 			nb->paths[i] = pnb;
 
 			pnb->count = pna->count + 1;
-			pnb->pairs = calloc(pnb->count, sizeof(uint64_t));
-			if (!pnb->pairs) {
+			pnb->subnets = calloc(pnb->count, sizeof(uint32_t));
+			if (!pnb->subnets) {
 				/* TODO */
-				assert(pnb->pairs);
+				assert(pnb->subnets);
 			}
-			memcpy(pnb->pairs, pna->pairs, pna->count * sizeof(uint64_t));
-			pnb->pairs[pnb->count - 1] = pair->id;
+			memcpy(pnb->subnets, pna->subnets, pna->count * sizeof(uint32_t));
+			pnb->subnets[pnb->count - 1] = ab;
 			pnb->score = score_path(globals, pnb);
 			if (pnb->score == CCIR_INVALID_PATH)
 				loop_found = 1;
@@ -1426,22 +1441,31 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 		qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
 
+again:
 		if (loop_found) {
-			for (i = (nb->count - 1);
-					nb->paths[i]->score == CCIR_INVALID_PATH; i--) {
+			uint32_t bad = 0;
+			for (i = 0; i < nb->count; i++) {
 				ccir_path_t *pnb = nb->paths[i];
 
 				if (pnb->score == (uint32_t) -1) {
-					free(pnb->pairs);
+					free(pnb->subnets);
 					free(pnb);
 					nb->count--;
+					bad = 1;
 				}
 			}
 			nb->paths = realloc(nb->paths, nb->count * sizeof(*nb->paths));
 			qsort(nb->paths, nb->count, sizeof(*nb->paths), compare_paths);
+			if (bad)
+				goto again;
 		}
 
-		ret = add_route(globals, nb);
+		if (nb->count) {
+			ret = add_route(globals, nb);
+		} else {
+			free(nb->paths);
+			free(nb);
+		}
 	} else {
 		/* The route NB exists, compare its paths to route NA's paths.
 		 * If any are missing (ignoring leading AB pair),
@@ -1453,6 +1477,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 		}
 		/* TODO */
 	}
+
 	print_routes(globals);
 
 	return;
@@ -1544,26 +1569,25 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 				continue;
 			}
 			/* Number of pairs if MA count + AB + BN count */
-			pmn->count = pma->count + 1 + pbn->count;
-			pmn->pairs = calloc(pmn->count, sizeof(*pmn->pairs));
-			if (!pmn->pairs) {
-				debug(RDB_TOPO, "%s: no memory for new path's pairs for x0%x_%x",
+			pmn->count = pma->count + pbn->count;
+			pmn->subnets = calloc(pmn->count, sizeof(*pmn->subnets));
+			if (!pmn->subnets) {
+				debug(RDB_TOPO, "%s: no memory for new path's subnets for x0%x_%x",
 					__func__, ma_lo, bn_hi);
 				free(pmn);
 				continue;
 			}
 			/* concatenate MA + AB + BN */
-			memcpy(pmn->pairs, pma->pairs, pma->count * sizeof(*pmn->pairs));
-			pmn->pairs[pma->count] = pair_id;
-			memcpy(&pmn->pairs[pma->count + 1], pbn->pairs,
-					pbn->count * sizeof(*pmn->pairs));
+			memcpy(pmn->subnets, pma->subnets, pma->count * sizeof(*pmn->subnets));
+			memcpy(&pmn->subnets[pma->count], pbn->subnets,
+					pbn->count * sizeof(*pmn->subnets));
 			pmn->score = score_path(globals, pmn);
 			if (pmn->score == CCIR_INVALID_PATH) {
 				if (globals->verbose) {
 					debug(RDB_TOPO, "%s: freeing invalid path joining "
 						"ma[%u] bn[%u]", __func__, i, j);
 				}
-				free(pmn->pairs);
+				free(pmn->subnets);
 				free(pmn);
 				continue;
 			} else {
@@ -1577,7 +1601,7 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 					ret = identical_paths(globals, pmn, pk);
 					if (ret == 0) {
 						add_path = 0;
-						free(pmn->pairs);
+						free(pmn->subnets);
 						free(pmn);
 						break;
 					}
@@ -1591,7 +1615,7 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 
 					if (!paths) {
 						mn--;
-						free(pmn->pairs);
+						free(pmn->subnets);
 						free(pmn);
 						debug(RDB_TOPO, "%s: no memory for new path",
 								__func__);
@@ -1647,14 +1671,15 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 		assert(path);
 		goto out;
 	}
-	path->count = 1;
-	path->pairs = calloc(1, sizeof(uint64_t));
-	if (!path->pairs) {
+	path->count = 2;
+	path->subnets = calloc(path->count, sizeof(uint32_t));
+	if (!path->subnets) {
 		ret = ENOMEM;
-		assert(path->pairs);
+		assert(path->subnets);
 		goto out;
 	}
-	path->pairs[0] = pair->id;
+	path->subnets[0] = lo;
+	path->subnets[1] = hi;
 	path->score = score_path(globals, path);
 
 	/* Does route exist? Does it have this pair? */
@@ -1693,7 +1718,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 
 		qsort(route->paths, route->count, sizeof(path), compare_paths);
 	} else {
-		free(path->pairs);
+		free(path->subnets);
 		free(path);
 	}
 
@@ -1721,7 +1746,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 out:
 	if (ret) {
 		if (path)
-			free(path->pairs);
+			free(path->subnets);
 		free(path);
 		if (new)
 			free(route);
