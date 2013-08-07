@@ -1362,13 +1362,14 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 		/* copy paths from NA and append pair AB */
 		for (i = 0; i < na->count; i++) {
-			ccir_path_t *pnb = nb->paths[i], *pna = na->paths[i];
+			ccir_path_t *pnb = NULL, *pna = na->paths[i];
 
 			pnb = calloc(1, sizeof(*pnb));
 			if (!pnb) {
 				/* TODO */
 				assert(pnb);
 			}
+			nb->paths[i] = pnb;
 
 			pnb->count = pna->count + 1;
 			pnb->pairs = calloc(pnb->count, sizeof(uint64_t));
