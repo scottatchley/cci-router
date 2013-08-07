@@ -942,15 +942,15 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 }
 
 static int
-compare_routes(const void *rr1, const void *rr2)
+compare_routes(const void *key, const void *rp)
 {
-	ccir_route_t *r1 = (ccir_route_t *)rr1;
-	ccir_route_t *r2 = (ccir_route_t *)rr2;
+	uint64_t *id = (uint64_t *)key;
+	ccir_route_t *r = *((ccir_route_t **)rp);
 
-	if (!r1) return -1;
-	if (!r2) return 1;
+	if (!id) return -1;
+	if (!r) return 1;
 
-	return (r1->id > r2->id) ? 1 : r1->id < r2->id ? -1 : 0;
+	return (*id > r->id) ? 1 : *id < r->id ? -1 : 0;
 }
 
 static inline uint32_t
