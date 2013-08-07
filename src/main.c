@@ -1032,7 +1032,7 @@ valid_path(ccir_globals_t *globals, ccir_path_t *path)
 		node = tfind(&ab, &(globals->topo->pairs), compare_u64);
 		if (!node) {
 			if (globals->verbose)
-				debug(RDB_TOPO, "%s: subnets 0x%x and 0x%x not directly"
+				debug(RDB_TOPO, "%s: subnets 0x%x and 0x%x not directly "
 						"routed", __func__, a, b);
 			ret = EINVAL;
 			goto out;
@@ -1199,6 +1199,7 @@ del_route(ccir_globals_t *globals, ccir_route_t *route)
 static inline void
 prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 {
+	int reverse = 0;
 	uint32_t a = 0, b = 0, bn_lo = 0, bn_hi = 0;
 	uint64_t route_id = 0, ab = pair->id;
 	ccir_route_t *an = NULL;
@@ -1234,6 +1235,9 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 		b = tmp;
 		ab = pack_pair_id(a, b);
 	}
+
+	if (a > bn_hi)
+		reverse = 1;
 
 	/* Route id for AN... */
 	route_id = pack_pair_id(a, bn_hi);
@@ -1271,7 +1275,17 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 		/* copy paths from BN and prepend pair AB */
 		for (i = 0; i < bn->count; i++) {
+			uint32_t sn = a;
+			int append = 0;
 			ccir_path_t *pan = NULL, *pbn = bn->paths[i];
+
+			debug(RDB_TOPO, "%s: pbn->subnets[0]   = 0x%x", __func__,
+					pbn->subnets[0]);
+			debug(RDB_TOPO, "%s: pbn->subnets[n-1] = 0x%x", __func__,
+					pbn->subnets[pbn->count - 1]);
+
+			if (!pbn->subnets[0] == a && !pbn->subnets[0] == b)
+				append = 1;
 
 			pan = calloc(1, sizeof(*pan));
 			if (!pan) {
@@ -1286,8 +1300,31 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 				/* TODO */
 				assert(pan->subnets);
 			}
-			pan->subnets[0] = a;
-			memcpy(&pan->subnets[1], pbn->subnets, pbn->count * sizeof(uint32_t));
+			if (append) {
+				if (pan->subnets[pan->count - 1] == a)
+					sn = b;
+				memcpy(&pan->subnets[0], pbn->subnets,
+						pbn->count * sizeof(uint32_t));
+				pan->subnets[pbn->count] = sn;
+			} else {
+				if (pan->subnets[0] == a)
+					sn = b;
+				pan->subnets[0] = sn;
+				memcpy(&pan->subnets[1], pbn->subnets,
+						pbn->count * sizeof(uint32_t));
+			}
+
+			if (reverse) {
+				uint32_t j = 0;
+
+				for (j = 0; j < pan->count / 2; j++) {
+					uint32_t tmp = pan->subnets[j];
+
+					pan->subnets[j] = pan->subnets[pan->count - 1 - j];
+					pan->subnets[pan->count - 1 - j] = tmp;
+				}
+			}
+
 			pan->score = score_path(globals, pan);
 			if (pan->score == CCIR_INVALID_PATH)
 				loop_found = 1;
@@ -1343,6 +1380,7 @@ again:
 static inline void
 append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 {
+	int reverse = 0;
 	int ret = 0;
 	uint32_t a = 0, b = 0, na_lo = 0, na_hi = 0;
 	uint64_t route_id = 0, ab = pair->id;
@@ -1379,6 +1417,9 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 		a = tmp;
 		ab = pack_pair_id(a, b);
 	}
+
+	if (na_lo > b)
+		reverse = 1;
 
 	/* Route id for NB... */
 	route_id = pack_pair_id(na_lo, b);
@@ -1417,7 +1458,18 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 		/* copy paths from NA and append pair AB */
 		for (i = 0; i < na->count; i++) {
+			uint32_t sn = a;
+			int prepend = 0;
 			ccir_path_t *pnb = NULL, *pna = na->paths[i];
+
+			debug(RDB_TOPO, "%s: pna->subnets[0]   = 0x%x", __func__,
+					pna->subnets[0]);
+			debug(RDB_TOPO, "%s: pna->subnets[n-1] = 0x%x", __func__,
+					pna->subnets[pna->count - 1]);
+
+			if (!pna->subnets[pna->count - 1] == a
+					&& !pna->subnets[pna->count - 1] == b)
+				prepend = 1;
 
 			pnb = calloc(1, sizeof(*pnb));
 			if (!pnb) {
@@ -1432,8 +1484,30 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 				/* TODO */
 				assert(pnb->subnets);
 			}
-			memcpy(pnb->subnets, pna->subnets, pna->count * sizeof(uint32_t));
-			pnb->subnets[pnb->count - 1] = ab;
+			if (prepend) {
+				if (pna->subnets[0] == a)
+					sn = b;
+				pnb->subnets[0] = sn;
+				memcpy(&pnb->subnets[1], pna->subnets,
+						pna->count * sizeof(uint32_t));
+			} else {
+				if (pna->subnets[pna->count - 1] == a)
+					sn = b;
+				memcpy(pnb->subnets, pna->subnets,
+						pna->count * sizeof(uint32_t));
+				pnb->subnets[pna->count] = sn;
+			}
+
+			if (reverse) {
+				uint32_t j = 0;
+
+				for (j = 0; j < pnb->count / 2; j++) {
+					uint32_t tmp = pnb->subnets[j];
+
+					pnb->subnets[j] = pnb->subnets[pnb->count - 1 - j];
+					pnb->subnets[pnb->count - 1 - j] = tmp;
+				}
+			}
 			pnb->score = score_path(globals, pnb);
 			if (pnb->score == CCIR_INVALID_PATH)
 				loop_found = 1;
