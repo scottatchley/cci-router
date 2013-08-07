@@ -2428,6 +2428,7 @@ open_endpoints(ccir_globals_t *globals)
 	 * Devices may have zero, one or more routers */
 	for (i = 0; i < cnt; i++) {
 		int j = 0, as = 0, subnet = 0, router = 0, unused = 0;
+		uint32_t rate = 0;
 		const char *arg = NULL;
 		cci_device_t *d = devs[i];
 		ccir_ep_t *ep = NULL;
@@ -2552,7 +2553,11 @@ open_endpoints(ccir_globals_t *globals)
 		ret = add_router_to_topo(globals, ep, 0, 0, ep->subnet, NULL, &rp, &unused);
 		assert(ret == 0);
 
-		ret = add_subnet_to_topo(globals, ep, ep->subnet, 1000, 0, &sp, &unused);
+		rate = ep->e->device->rate / 1000000000;
+		if (!rate)
+			rate = 1;
+
+		ret = add_subnet_to_topo(globals, ep, ep->subnet, rate, 0, &sp, &unused);
 		assert(ret == 0);
 
 		ret = add_pairs(globals, sp, rp);
