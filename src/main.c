@@ -1115,6 +1115,45 @@ identical_paths(ccir_globals_t *globals, ccir_path_t *a, ccir_path_t *b)
 	return 0;
 }
 
+static void
+print_route(ccir_globals_t *globals, ccir_route_t *route)
+{
+	uint32_t i = 0, lo = 0, hi = 0;
+
+	parse_pair_id(route->id, &lo, &hi);
+	debug(RDB_TOPO, "    route 0x%x_%x count %u:", lo, hi, route->count);
+
+	if (!route->count) return;
+
+	for (i = 0; i < route->count; i++) {
+		uint32_t j = 0;
+		ccir_path_t *path = route->paths[i];
+
+		debug(RDB_TOPO, "        path %u with %u pairs and score %u:",
+				i, path->count, path->score);
+
+		for (j = 0; j < path->count; j++) {
+			parse_pair_id(path->pairs[j], &lo, &hi);
+			debug(RDB_TOPO, "            0x%x_%x ", lo, hi);
+		}
+	}
+
+	return;
+}
+
+static inline void
+print_routes(ccir_globals_t *globals)
+{
+	uint32_t i = 0;
+
+	debug(RDB_TOPO, "%s:", __func__);
+
+	for (i = 0; i < globals->topo->num_routes; i++)
+		print_route(globals, globals->topo->routes[i]);
+
+	return;
+}
+
 static inline int
 add_route(ccir_globals_t *globals, ccir_route_t *route)
 {
@@ -1288,6 +1327,7 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 		}
 		/* TODO */
 	}
+	print_routes(globals);
 
 	return;
 }
@@ -1413,6 +1453,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 		}
 		/* TODO */
 	}
+	print_routes(globals);
 
 	return;
 }
@@ -1435,21 +1476,26 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 	parse_pair_id(ma->id, &ma_lo, &ma_hi);
 	parse_pair_id(bn->id, &bn_lo, &bn_hi);
 
+	if (globals->verbose) {
+		debug(RDB_TOPO, "%s: check if route MA (0x%x_%x) + AB (0x%x_%x) + "
+				"BN (0x%x_%x) is joinable", __func__, ma_lo, ma_hi,
+				pair_lo, pair_hi, bn_lo, bn_hi);
+	}
+
 	if (ma_hi != pair_lo) {
 		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: route 0x%x_%x does not connect to 0x%x_%x",
-				__func__, ma_lo, ma_hi, pair_lo, pair_hi);
+			debug(RDB_TOPO, "%s: MA route 0x%x_%x does not connect to pair "
+				"0x%x_%x", __func__, ma_lo, ma_hi, pair_lo, pair_hi);
+		}
+		return;
+	} else if (pair_hi != bn_lo) {
+		if (globals->verbose) {
+			debug(RDB_TOPO, "%s: NB route 0x%x_%x does not connect to "
+				"pair 0x%x_%x", __func__, pair_lo, pair_hi, bn_lo, bn_hi);
 		}
 		return;
 	}
 
-	if (pair_hi != bn_lo) {
-		if (globals->verbose) {
-			debug(RDB_TOPO, "%s: route 0x%x_%x does not connect to 0x%x_%x",
-				__func__, pair_lo, pair_hi, bn_lo, bn_hi);
-		}
-		return;
-	}
 	if (globals->verbose) {
 		debug(RDB_TOPO, "%s: checking for route 0x%x_%x", __func__,
 			ma_lo, bn_hi);
@@ -1814,6 +1860,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 
 	ret = add_pairs(globals, subnet, router);
 	assert(ret == 0);
+
+	print_routes(globals);
 
 	/* TODO forward to N-1 endpoints */
 	/* forward_rir(globals, ep, peer, event->recv.ptr, event->recv.len); */
@@ -2380,12 +2428,14 @@ open_endpoints(ccir_globals_t *globals)
 	/* Make sure that the devices have specified  as and subnet.
 	 * Devices may have zero, one or more routers */
 	for (i = 0; i < cnt; i++) {
-		int j = 0, as = 0, subnet = 0, router = 0;
+		int j = 0, as = 0, subnet = 0, router = 0, unused = 0;
 		const char *arg = NULL;
 		cci_device_t *d = devs[i];
 		ccir_ep_t *ep = NULL;
 		ccir_peer_t *peer = NULL;
 		cci_os_handle_t *fd = NULL;
+		ccir_router_t *rp = NULL;
+		ccir_subnet_t *sp = NULL;
 
 		if (!d)
 			break;
@@ -2499,14 +2549,25 @@ open_endpoints(ccir_globals_t *globals)
 		if (globals->verbose)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
 					ep->uri, d->name);
+
+		ret = add_router_to_topo(globals, ep, 0, 0, ep->subnet, NULL, &rp, &unused);
+		assert(ret == 0);
+
+		ret = add_subnet_to_topo(globals, ep, ep->subnet, 1000, 0, &sp, &unused);
+		assert(ret == 0);
+
+		ret = add_pairs(globals, sp, rp);
+		assert(ret == 0);
 	}
 
 	if (cnt < 2)
 		debug(RDB_ALL, "Unable to route with %d endpoint%s.",
 				cnt, cnt == 0 ? "s" : "");
 
-	if (globals->verbose)
+	if (globals->verbose) {
 		debug(RDB_EP, "%s: globals->id = 0x%x", __func__, hash);
+		print_routes(globals);
+	}
 
 	globals->eps = es;
 	globals->ep_cnt = cnt;
