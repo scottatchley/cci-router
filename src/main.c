@@ -447,6 +447,26 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	return;
 }
 
+/* For each peer on each endpoint, send all endpoint RIRs */
+static void
+send_all_rir(ccir_globals_t *globals)
+{
+	ccir_ep_t **e = NULL;
+
+	for (e = globals->eps; *e != NULL; e++) {
+		ccir_peer_t **p = NULL;
+
+		for (p = (*e)->peers; *p != NULL; p++) {
+			ccir_ep_t **ee = NULL;
+
+			for (ee = globals->eps; *ee != NULL; ee++) {
+				if ((*p)->c)
+					send_rir(globals, *e, *p);
+			}
+		}
+	}
+}
+
 /* Handle an accept event.
  *
  * Need to determine if the event if for router-to-router use or
@@ -2307,10 +2327,13 @@ out:
 	return ret;
 }
 
+#define CCIR_SEND_RIR_TIME	(30)	/* seconds */
+
 static void
 event_loop(ccir_globals_t *globals)
 {
 	int ret = 0;
+	struct timeval old, current;
 
 	running = 1;
 
@@ -2318,9 +2341,17 @@ event_loop(ccir_globals_t *globals)
 	if (ret)
 		goto out;
 
+	gettimeofday(&old, NULL);
+
 	while (running) {
 		connect_peers(globals);
 		get_event(globals);
+		gettimeofday(&current, NULL);
+
+		if ((current.tv_sec - old.tv_sec) > CCIR_SEND_RIR_TIME) {
+			old = current;
+			send_all_rir(globals);
+		}
 	}
 
 	/* Notify peers we are no longer routing */
