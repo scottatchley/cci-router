@@ -599,26 +599,17 @@ handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static int
 compare_u32(const void *pa, const void *pb)
 {
-	if (*(uint32_t *) pa < *(uint32_t *) pb)
-		return -1;
-	if (*(uint32_t *) pa > *(uint32_t *) pb)
-		return 1;
+	uint32_t *a = (uint32_t *)pa, *b = (uint32_t *)pb;
 
-	return 0; /* match */
+	return (int) *a - (int) *b;
 }
 
 static int
 compare_u64(const void *pa, const void *pb)
 {
-	if (!pa) return -1;
-	if (!pb) return 1;
+	uint64_t *a = (uint64_t *)pa, *b = (uint64_t *)pb;
 
-	if (*(uint64_t *) pa < *(uint64_t *) pb)
-		return -1;
-	if (*(uint64_t *) pa > *(uint64_t *) pb)
-		return 1;
-
-	return 0; /* match */
+	return *a > *b ? 1 : *a < *b ? -1 : 0;
 }
 
 static inline void
@@ -652,6 +643,8 @@ print_routers(ccir_globals_t *globals)
 {
 	uint32_t i = 0;
 
+	debug(RDB_TOPO, "%s: count = %u", __func__, globals->topo->num_routers);
+
 	for (i = 0; i < globals->topo->num_routers; i++)
 		print_router(globals, globals->topo->routers[i]);
 
@@ -676,6 +669,8 @@ static void
 print_subnets(ccir_globals_t *globals)
 {
 	uint32_t i = 0;
+
+	debug(RDB_TOPO, "%s: count = %u", __func__, globals->topo->num_subnets);
 
 	for (i = 0; i < globals->topo->num_subnets; i++)
 		print_subnet(globals, globals->topo->subnets[i]);
@@ -730,11 +725,20 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_subnet_t *subnet, uint32_t ro
 		debug(RDB_TOPO, "%s: subnet 0x%x already has router 0x%x",
 			__func__, subnet->id, router_id);
 	} else {
+		uint32_t *routers = NULL;
+
 		debug(RDB_TOPO, "%s: subnet 0x%x adding router 0x%x",
 			__func__, subnet->id, router_id);
 
 		subnet->count++;
-		subnet->routers = realloc(subnet->routers, sizeof(*r) * subnet->count);
+		routers = realloc(subnet->routers, sizeof(*r) * subnet->count);
+		if (!routers) {
+			debug(RDB_TOPO, "%s: no memory for router 0x%x",
+					__func__, router_id);
+			subnet->count--;
+			return;
+		}
+		subnet->routers = routers;
 		subnet->routers[subnet->count - 1] = router_id;
 
 		qsort(subnet->routers, subnet->count, sizeof(*r), compare_u32);
@@ -1171,7 +1175,7 @@ print_routes(ccir_globals_t *globals)
 {
 	uint32_t i = 0;
 
-	debug(RDB_TOPO, "%s:", __func__);
+	debug(RDB_TOPO, "%s: count = %u", __func__, globals->topo->num_routes);
 
 	for (i = 0; i < globals->topo->num_routes; i++)
 		print_route(globals, globals->topo->routes[i]);
