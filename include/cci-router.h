@@ -169,7 +169,7 @@ typedef enum ccir_metric {
 
 struct ccir_topo {
 	pthread_rwlock_t lock;	/* Read/write lock */
-	void *subnets;		/* tree of subnets sorted on subnet ID */
+	ccir_subnet_t **subnets; /* Array of pointers of subnets sorted on subnet ID */
 	uint32_t num_subnets;	/* number of subnets */
 	void *routers;		/* tree of routers sorted in router ID */
 	uint32_t num_routers;	/* number of routers */

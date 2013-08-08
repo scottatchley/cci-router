@@ -656,24 +656,12 @@ print_subnet(ccir_globals_t *globals, ccir_subnet_t *s)
 }
 
 static void
-print_subnet_tree(const void *nodep, const VISIT which, const int depth)
+print_subnets(ccir_globals_t *globals)
 {
-	uint32_t *id = *(uint32_t **) nodep;
-	ccir_subnet_t *subnet = container_of(id, ccir_subnet_t, id);
-	ccir_globals_t *globals = subnet->g;
+	uint32_t i = 0;
 
-	switch (which) {
-	case preorder:
-		break;
-	case postorder:
-		print_subnet(globals, subnet);
-		break;
-	case endorder:
-		break;
-	case leaf:
-		print_subnet(globals, subnet);
-		break;
-	}
+	for (i = 0; i < globals->topo->num_subnets; i++)
+		print_subnet(globals, globals->topo->subnets[i]);
 }
 
 static inline void
@@ -745,28 +733,40 @@ add_router_to_subnet(ccir_globals_t *globals, ccir_subnet_t *subnet, uint32_t ro
 }
 
 static int
+compare_subnets(const void *sp1, const void *sp2)
+{
+	ccir_subnet_t *s1 = *((ccir_subnet_t **)sp1);
+	ccir_subnet_t *s2 = *((ccir_subnet_t **)sp2);
+
+	return (int)(s1->id) - (int)(s2->id);
+}
+
+static int
 add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 		uint32_t subnet_rate, uint32_t router_id, ccir_subnet_t **sn, int *new)
 {
 	int ret = 0;
-	void *node = NULL;
-	uint32_t *id = &subnet_id;
-	ccir_subnet_t *subnet = NULL;
+	ccir_subnet_t **sp = NULL, *subnet = NULL, *key = NULL, tmp;
+	ccir_topo_t *topo = globals->topo;
 
-	node = tfind(id, &(globals->topo->subnets), compare_u32);
-	if (node) {
-		id = *((uint32_t**)node);
-		subnet = container_of(id, ccir_subnet_t, id);
+	tmp.id = subnet_id;
+	key = &tmp;
 
+	sp = bsearch(&key, topo->subnets, topo->num_subnets, sizeof(subnet),
+			compare_subnets);
+	if (sp)
+		subnet = *sp;
+
+	if (subnet) {
 		if (globals->verbose) {
 			debug(RDB_PEER, "%s: EP %p: adding ref to subnet %u "
 				"(count was %u)", __func__, (void*)ep,
 				subnet->id, subnet->count);
 		}
-
+		subnet->count++;
 		*new = 0;
 	} else {
-		int empty = globals->topo->subnets == NULL;
+		ccir_subnet_t **subnets = NULL;
 
 		subnet = calloc(1, sizeof(*subnet));
 		if (!subnet) {
@@ -783,33 +783,31 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 				__func__, (void*)ep, subnet->id);
 		}
 
-		node = tsearch(&subnet->id, &(globals->topo->subnets), compare_u32);
-		if (!node && !empty) {
-			/* TODO */
-			assert(0);
+		topo->num_subnets++;
+		subnets = realloc(topo->subnets, sizeof(subnet) * topo->num_subnets);
+		if (!subnets) {
+			debug(RDB_TOPO, "%s: no memory for subnet 0x%x", __func__,
+					subnet_id);
+			free(subnet);
+			topo->num_subnets--;
+			ret = ENOMEM;
+			goto out;
 		}
-		globals->topo->num_subnets++;
+		topo->subnets = subnets;
+		topo->subnets[topo->num_subnets - 1] = subnet;
+
+		qsort(topo->subnets, topo->num_subnets, sizeof(subnet), compare_subnets);
 		*new = 1;
 	}
 
 	add_router_to_subnet(globals, subnet, router_id);
 
 	if (globals->verbose)
-		twalk(globals->topo->subnets, print_subnet_tree);
+		print_subnets(globals);
 
 	*sn = subnet;
+out:
 	return ret;
-}
-
-static inline int
-compare_subnet(const void *sn1, const void *sn2)
-{
-	ccir_subnet_t *s1 = (ccir_subnet_t *)sn1;
-	ccir_subnet_t *s2 = (ccir_subnet_t *)sn2;
-
-	if (!s1) return -1;
-	if (!s2) return 1;
-	return s1->id - s2->id;
 }
 
 static void
@@ -947,9 +945,6 @@ compare_routes(const void *key, const void *rp)
 	uint64_t *id = (uint64_t *)key;
 	ccir_route_t *r = *((ccir_route_t **)rp);
 
-	if (!id) return -1;
-	if (!r) return 1;
-
 	return (*id > r->id) ? 1 : *id < r->id ? -1 : 0;
 }
 
@@ -960,18 +955,22 @@ score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 
 	for (i = 0; i < path->count; i++) {
 		uint32_t subnet_id = path->subnets[i];
-		void *node = NULL;
-		ccir_subnet_t *subnet = NULL;
+		ccir_subnet_t **sp = NULL, *subnet = NULL, *key = NULL, tmp;
 
-		node = tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
-		if (node) {
-			uint32_t *id = *((uint32_t**)node);
-			subnet = container_of(id, ccir_subnet_t, id);
+		tmp.id = subnet_id;
+		key = &tmp;
 
+		sp = bsearch(&key, globals->topo->subnets,
+				globals->topo->num_subnets, sizeof(subnet),
+				compare_subnets);
+		if (sp)
+			subnet = *sp;
+
+		if (subnet) {
 			score += 1000 / subnet->rate;
 		} else {
 			/* TODO */
-			assert(node);
+			assert(subnet);
 		}
 	}
 
@@ -2019,22 +2018,33 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	/* find subnets, if find router, remove router && decref subnet */
 	for (i = 0; i < hdr->del.count; i++) {
 		uint32_t subnet_id = 0;
+		ccir_subnet_t **sp = NULL, *key = NULL, tmp;
 
 		subnet_id = ntohl(del->subnet[i]);
+		tmp.id = subnet_id;
+		key = &tmp;
 
-		node = tfind(&subnet_id, &(globals->topo->subnets), compare_u32);
-		if (node) {
-			uint32_t *id = *((uint32_t**)node);
-			subnet = container_of(id, ccir_subnet_t, id);
+		sp = bsearch(&key, globals->topo->subnets,
+				globals->topo->num_subnets, sizeof(subnet),
+				compare_subnets);
+		if (sp)
+			subnet = *sp;
 
+		if (subnet) {
 			delete_router_from_subnet(globals, ep, subnet, del->router,
 				del->instance);
 
 			if (subnet->count == 0) {
-				tdelete(&subnet_id, &(globals->topo->subnets), compare_u32);
+				subnet->id = ~0;
+				qsort(globals->topo->subnets, globals->topo->num_subnets,
+						sizeof(subnet), compare_subnets);
 				free(subnet->routers);
 				free(subnet);
 				globals->topo->num_subnets--;
+				globals->topo->subnets =
+					realloc(globals->topo->subnets,
+							globals->topo->num_subnets *
+							sizeof(subnet));
 				debug(RDB_PEER, "%s: EP %p: deleted subnet id 0x%x",
 					__func__, (void*)ep, subnet_id);
 			}
@@ -2072,11 +2082,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	}
 
 	if (globals->verbose) {
-		if (globals->topo->subnets != NULL)
-			twalk(globals->topo->subnets, print_subnet_tree);
-		else
-			debug(RDB_PEER, "%s: EP %p: no more subnets",
-				__func__, (void*)ep);
+		print_subnets(globals);
 	}
 
 	return;
@@ -2780,18 +2786,16 @@ out_w_init:
 				node = globals->topo->pairs;
 			}
 		}
-		if (globals->topo->subnets) {
-			void *node = globals->topo->subnets;
+		if (globals->topo->num_subnets) {
+			uint32_t i = 0;
 
-			while (node) {
-				uint32_t *id = *((uint32_t**)node);
-				ccir_subnet_t *subnet = container_of(id, ccir_subnet_t, id);
+			for (i = 0; i < globals->topo->num_subnets; i++) {
+				ccir_subnet_t *subnet = globals->topo->subnets[i];
 
-				tdelete(id, &(globals->topo->subnets), compare_u32);
 				free(subnet->routers);
 				free(subnet);
-				node = globals->topo->subnets;
 			}
+			free(globals->topo->subnets);
 		}
 		if (globals->topo->routers) {
 			void *node = globals->topo->routers;
