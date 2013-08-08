@@ -2353,7 +2353,7 @@ out:
 	return ret;
 }
 
-#define CCIR_SEND_RIR_TIME	(30)	/* seconds */
+#define CCIR_SEND_RIR_TIME	(300)	/* seconds */
 
 static void
 event_loop(ccir_globals_t *globals)
