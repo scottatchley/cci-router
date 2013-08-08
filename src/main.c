@@ -12,6 +12,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -2358,10 +2359,16 @@ out:
 static void
 event_loop(ccir_globals_t *globals)
 {
-	int ret = 0;
+	int ret = 0, adjust = 0;
 	struct timeval old, current;
 
 	running = 1;
+
+	/* add variation to resend time to avoid resent storms.
+	 * adjust up to +-25% of CCIR_SEND_RIR_TIME
+	 */
+	adjust = (int) random() % (CCIR_SEND_RIR_TIME / 2);
+	adjust -= CCIR_SEND_RIR_TIME / 4;
 
 	ret = install_sig_handlers(globals);
 	if (ret)
@@ -2797,6 +2804,8 @@ main(int argc, char *argv[])
 		ret = ENOMEM;
 		goto out;
 	}
+
+	srandom(getpid());
 
 	gettimeofday(&t, NULL);
 	globals->instance = t.tv_sec;
