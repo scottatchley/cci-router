@@ -776,11 +776,9 @@ add_subnet_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t subnet_id,
 
 	if (subnet) {
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding ref to subnet %u "
-				"(count was %u)", __func__, (void*)ep,
-				subnet->id, subnet->count);
+			debug(RDB_PEER, "%s: EP %p: found subnet 0x%x",
+					__func__, (void*)ep, subnet->id);
 		}
-		subnet->count++;
 		*new = 0;
 	} else {
 		ccir_subnet_t **subnets = NULL;
