@@ -461,7 +461,7 @@ send_all_rir(ccir_globals_t *globals)
 
 			for (ee = globals->eps; *ee != NULL; ee++) {
 				if ((*p)->c)
-					send_rir(globals, *e, *p);
+					send_rir(globals, *ee, *p);
 			}
 		}
 	}
