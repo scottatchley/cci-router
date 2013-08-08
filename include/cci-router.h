@@ -171,7 +171,7 @@ struct ccir_topo {
 	pthread_rwlock_t lock;	/* Read/write lock */
 	ccir_subnet_t **subnets; /* Array of pointers of subnets sorted on subnet ID */
 	uint32_t num_subnets;	/* number of subnets */
-	void *routers;		/* tree of routers sorted in router ID */
+	ccir_router_t **routers; /* Array of pointers of routers sorted in router ID */
 	uint32_t num_routers;	/* number of routers */
 	void *pairs;		/* tree of all directly connected subnets */
 	uint32_t num_pairs;	/* number of pairs */

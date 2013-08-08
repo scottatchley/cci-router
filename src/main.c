@@ -648,24 +648,14 @@ print_router(ccir_globals_t *globals, ccir_router_t *r)
 }
 
 static void
-print_router_tree(const void *nodep, const VISIT which, const int depth)
+print_routers(ccir_globals_t *globals)
 {
-	uint32_t *id = *(uint32_t **) nodep;
-	ccir_router_t *router = container_of(id, ccir_router_t, id);
-	ccir_globals_t *globals = router->g;
+	uint32_t i = 0;
 
-	switch (which) {
-	case preorder:
-		break;
-	case postorder:
-		print_router(globals, router);
-		break;
-	case endorder:
-		break;
-	case leaf:
-		print_router(globals, router);
-		break;
-	}
+	for (i = 0; i < globals->topo->num_routers; i++)
+		print_router(globals, globals->topo->routers[i]);
+
+	return;
 }
 
 static inline void
@@ -869,21 +859,30 @@ add_subnet_to_router(ccir_globals_t *globals, ccir_router_t *router, uint32_t su
 }
 
 static int
+compare_routers(const void *rp1, const void *rp2)
+{
+	ccir_router_t *r1 = *((ccir_router_t **)rp1);
+	ccir_router_t *r2 = *((ccir_router_t **)rp2);
+
+	return (int)(r1->id) - (int)(r2->id);
+}
+
+static int
 add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 		uint64_t router_instance, uint32_t subnet_id, ccir_peer_t *peer,
 		ccir_router_t **r, int *new)
 {
 	int ret = 0;
-	void *node = NULL;
-	uint32_t *id = &router_id;
 	ccir_topo_t *topo = globals->topo;
-	ccir_router_t *router = NULL;
+	ccir_router_t *router = NULL, **rp = NULL, tmp, *key = &tmp;
 
-	node = tfind(id, &(topo->routers), compare_u32);
-	if (node) {
-		id = *((uint32_t**)node);
-		router = container_of(id, ccir_router_t, id);
+	tmp.id = router_id;
 
+	rp = bsearch(&key, topo->routers, topo->num_routers, sizeof(router), compare_routers);
+	if (rp)
+		router = *rp;
+
+	if (router) {
 		if (globals->verbose) {
 			debug(RDB_PEER, "%s: EP %p: adding ref to router 0x%x "
 				"(count was %u)", __func__, (void*)ep,
@@ -897,7 +896,7 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 
 		*new = 0;
 	} else {
-		int empty = topo->routers == NULL;
+		ccir_router_t **routers = NULL;
 
 		router = calloc(1, sizeof(*router));
 		if (!router) {
@@ -915,20 +914,29 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 				__func__, (void*)ep, router->id);
 		}
 
-		node = tsearch(&router->id, &(topo->routers), compare_u32);
-		if (!node && !empty) {
-			/* TODO */
-			assert(!node && !empty);
+		topo->num_routers++;
+		routers = realloc(topo->routers, topo->num_routers * sizeof(router));
+		if (!routers) {
+			topo->num_routers--;
+			free(router);
+			ret = ENOMEM;
+			goto out;
 		}
+		topo->routers = routers;
+		topo->routers[topo->num_routers - 1] = router;
+
+		qsort(topo->routers, topo->num_routers, sizeof(router), compare_routers);
+
 		*new = 1;
 	}
 
 	add_subnet_to_router(globals, router, subnet_id);
 
 	if (globals->verbose)
-		twalk(globals->topo->routers, print_router_tree);
+		print_routers(globals);
 
 	*r = router;
+out:
 	return ret;
 }
 
@@ -2054,11 +2062,12 @@ static void
 handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
+	ccir_topo_t *topo = globals->topo;
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*) event->recv.ptr; /* in host order */
 	ccir_del_data_t *del = (ccir_del_data_t *)hdr->del.data;
 	ccir_subnet_t *subnet = NULL;
+	ccir_router_t *router = NULL, **rp = NULL, tmp, *key = &tmp;
 	int i = 0, bye = hdr->del.bye;
-	void *node = NULL;
 
 	del->instance = ccir_ntohll(del->instance);
 	del->router = ntohl(del->router);
@@ -2081,8 +2090,8 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		tmp.id = subnet_id;
 		key = &tmp;
 
-		sp = bsearch(&key, globals->topo->subnets,
-				globals->topo->num_subnets, sizeof(subnet),
+		sp = bsearch(&key, topo->subnets,
+				topo->num_subnets, sizeof(subnet),
 				compare_subnets);
 		if (sp)
 			subnet = *sp;
@@ -2092,16 +2101,19 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 				del->instance);
 
 			if (subnet->count == 0) {
+				ccir_subnet_t **subnets = NULL;
+
 				subnet->id = ~0;
-				qsort(globals->topo->subnets, globals->topo->num_subnets,
+				qsort(topo->subnets, topo->num_subnets,
 						sizeof(subnet), compare_subnets);
 				free(subnet->routers);
 				free(subnet);
-				globals->topo->num_subnets--;
-				globals->topo->subnets =
-					realloc(globals->topo->subnets,
-							globals->topo->num_subnets *
-							sizeof(subnet));
+				topo->num_subnets--;
+				subnets = realloc(topo->subnets,
+							topo->num_subnets * sizeof(subnet));
+				if (subnets)
+					topo->subnets = subnets;
+
 				debug(RDB_PEER, "%s: EP %p: deleted subnet id 0x%x",
 					__func__, (void*)ep, subnet_id);
 			}
@@ -2112,14 +2124,26 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		}
 	}
 
-	node = tfind(&del->router, &(globals->topo->routers), compare_u32);
-	if (node) {
-		uint32_t *id = *((uint32_t**)node);
-		ccir_router_t *router = container_of(id, ccir_router_t, id);
+	tmp.id = del->router;
 
+	rp = bsearch(&key, topo->routers, topo->num_routers, sizeof(router), compare_routers);
+
+	if (rp)
+		router = *rp;
+
+	if (router) {
 		router->count -= hdr->del.count;
 		if (router->count == 0) {
-			tdelete(&del->router, &(globals->topo->routers), compare_u32);
+			ccir_router_t **routers = NULL;
+
+			router->id = ~0;
+			qsort(topo->routers, topo->num_routers,
+					sizeof(router), compare_routers);
+			routers = realloc(topo->routers,
+					topo->num_subnets * sizeof(router));
+			if (routers)
+				topo->routers = routers;
+
 			free(router->subnets);
 			free(router->pairs);
 			free(router);
@@ -2866,18 +2890,16 @@ out_w_init:
 			free(globals->topo->subnets);
 		}
 		if (globals->topo->routers) {
-			void *node = globals->topo->routers;
+			uint32_t i = 0;
 
-			while (node) {
-				uint32_t *id = *((uint32_t**)node);
-				ccir_router_t *router = container_of(id, ccir_router_t, id);
+			for (i = 0; i < globals->topo->num_routers; i++) {
+				ccir_router_t *router = globals->topo->routers[i];
 
-				tdelete(id, &(globals->topo->routers), compare_u32);
 				free(router->subnets);
 				free(router->pairs);
 				free(router);
-				node = globals->topo->routers;
 			}
+			free(globals->topo->routers);
 		}
 	}
 	free(globals->topo);
