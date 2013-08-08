@@ -473,7 +473,14 @@ handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			ccir_ep_t **e = NULL;
 
 			peer->state = CCIR_PEER_CONNECTED;
+#if 0
+			/* TODO disconnect? */
+			if (peer->c) {
+				cci_disconnect(peer->c);
+				peer->c = NULL;
+			}
 			assert(peer->c == NULL);
+#endif
 			peer->c = event->accept.connection;
 			ep->need_connect--;
 
@@ -864,7 +871,9 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 		}
 
 		/* TODO */
-		assert(router->instance == router_instance);
+		debug(RDB_TOPO, "%s: router 0x%x new instance 0x%"PRIx64" (old 0x%"PRIx64")",
+				__func__, router->id, router_instance, router->instance);
+		router->instance = router_instance;
 
 		*new = 0;
 	} else {
@@ -940,12 +949,16 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 }
 
 static int
-compare_routes(const void *key, const void *rp)
+compare_routes(const void *rp1, const void *rp2)
 {
-	uint64_t *id = (uint64_t *)key;
-	ccir_route_t *r = *((ccir_route_t **)rp);
+	ccir_route_t *r1 = *((ccir_route_t **)rp1);
+	ccir_route_t *r2 = *((ccir_route_t **)rp2);
 
-	return (*id > r->id) ? 1 : *id < r->id ? -1 : 0;
+	/* if r1 > r2, return 1
+	 * else if r1 < r2, return -1
+	 * else return 0
+	 */
+	return (r1->id > r2->id) ? 1 : (r1->id < r2->id) ? -1 : 0;
 }
 
 static inline uint32_t
@@ -970,7 +983,7 @@ score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 			score += 1000 / subnet->rate;
 		} else {
 			/* TODO */
-			assert(subnet);
+			debug(RDB_TOPO, "%s: unknown subnet 0x%x", __func__, subnet_id);
 		}
 	}
 
@@ -1201,7 +1214,7 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 	int reverse = 0;
 	uint32_t a = 0, b = 0, bn_lo = 0, bn_hi = 0;
 	uint64_t route_id = 0, ab = pair->id;
-	ccir_route_t *an = NULL;
+	ccir_route_t **rp = NULL, *an = NULL, *key = NULL, tmp;
 	ccir_topo_t *topo = globals->topo;
 
 	parse_pair_id(pair->id, &a, &b);
@@ -1240,9 +1253,14 @@ prepend_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *bn)
 
 	/* Route id for AN... */
 	route_id = pack_pair_id(a, bn_hi);
+	tmp.id = route_id;
+	key = &tmp;
 
-	an = bsearch(&route_id, topo->routes, topo->num_routes, sizeof(an),
+	rp = bsearch(&key, topo->routes, topo->num_routes, sizeof(an),
 			compare_routes);
+	if (rp)
+		an = *rp;
+
 	if (!an) {
 		int loop_found = 0, ret = 0;
 		uint32_t i = 0;
@@ -1383,7 +1401,7 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 	int ret = 0;
 	uint32_t a = 0, b = 0, na_lo = 0, na_hi = 0;
 	uint64_t route_id = 0, ab = pair->id;
-	ccir_route_t *nb = NULL;
+	ccir_route_t *nb = NULL, **rp = NULL, *key = NULL, tmp;
 	ccir_topo_t *topo = globals->topo;
 
 	parse_pair_id(pair->id, &a, &b);
@@ -1422,9 +1440,15 @@ append_pair(ccir_globals_t *globals, ccir_pair_t *pair, ccir_route_t *na)
 
 	/* Route id for NB... */
 	route_id = pack_pair_id(na_lo, b);
+	tmp.id = route_id;
+	key = &tmp;
 
-	nb = bsearch(&route_id, topo->routes, topo->num_routes, sizeof(nb),
+	rp = bsearch(&key, topo->routes, topo->num_routes, sizeof(nb),
 			compare_routes);
+
+	if (rp)
+		nb = *rp;
+
 	if (!nb) {
 		int loop_found = 0;
 		uint32_t i = 0;
@@ -1566,7 +1590,7 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 	uint32_t pair_lo = 0, pair_hi = 0, ma_lo = 0, ma_hi = 0, bn_lo = 0, bn_hi = 0;
 	uint32_t i = 0;
 	uint64_t mn_id = 0;
-	ccir_route_t *mn = NULL;
+	ccir_route_t *mn = NULL, **rp = NULL, *key = NULL, tmp;
 	ccir_topo_t *topo = globals->topo;
 	ccir_path_t *pma = NULL, *pbn = NULL, *pmn = NULL;
 
@@ -1600,7 +1624,13 @@ join_ma_ab_bn(ccir_globals_t *globals, uint64_t pair_id,
 	}
 
 	mn_id = pack_pair_id(ma_lo, bn_hi);
-	mn = bsearch(&mn_id, topo->routes, topo->num_routes, sizeof(mn), compare_routes);
+	tmp.id = mn_id;
+	key = &tmp;
+
+	rp = bsearch(&key, topo->routes, topo->num_routes, sizeof(mn), compare_routes);
+	if (rp)
+		mn = *rp;
+
 	if (!mn) {
 		/* new route, create it */
 		mn = calloc(1, sizeof(*mn));
@@ -1729,7 +1759,7 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 {
 	int ret = 0, new = 0, found = 0;
 	uint32_t lo = 0, hi = 0, i = 0;
-	ccir_route_t *route = NULL;
+	ccir_route_t *route = NULL, **rp = NULL, *key = NULL, tmp;
 	ccir_path_t *path = NULL;
 	ccir_topo_t *topo = globals->topo;
 
@@ -1755,9 +1785,16 @@ add_routes(ccir_globals_t *globals, ccir_pair_t *pair)
 	path->subnets[1] = hi;
 	path->score = score_path(globals, path);
 
+	tmp.id = pair->id;
+	key = &tmp;
+
 	/* Does route exist? Does it have this pair? */
-	route = bsearch(&pair->id, topo->routes, topo->num_routes, sizeof(route),
+	rp = bsearch(&key, topo->routes, topo->num_routes, sizeof(route),
 			compare_routes);
+
+	if (rp)
+		route = *rp;
+
 	if (route) {
 		for (i = 0; i < route->count; i++) {
 			ret = identical_paths(globals, path, route->paths[i]);
