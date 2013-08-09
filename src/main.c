@@ -2012,6 +2012,15 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			peer, &router, &new_router);
 	assert(ret == 0);
 
+	/* NOTE: If this is a new_router and not a direct peer, we could send our
+	 *       RIR msgs to this peer who would forward them on. If a lot of routers
+	 *       start at the same time though, it could lead to a lot of traffic
+	 *       all at once.
+	 *
+	 *       For now, let the periodic resend mechanism send the RIR msgs. At worst,
+	 *       new peers will wait for CCIR_SEND_RIR_TIME seconds +- 25%.
+	 */
+
 	ret = add_subnet_to_topo(globals, ep, rir->subnet[0].id, rir->subnet[0].rate,
 			router->id, &subnet, &new_subnet);
 	assert(ret == 0);
@@ -2359,16 +2368,16 @@ out:
 static void
 event_loop(ccir_globals_t *globals)
 {
-	int ret = 0, adjust = 0;
+	int ret = 0, resend_period = 0;
 	struct timeval old, current;
 
 	running = 1;
 
 	/* add variation to resend time to avoid resent storms.
-	 * adjust up to +-25% of CCIR_SEND_RIR_TIME
+	 * resend_period up to +-25% of CCIR_SEND_RIR_TIME
 	 */
-	adjust = (int) random() % (CCIR_SEND_RIR_TIME / 2);
-	adjust -= CCIR_SEND_RIR_TIME / 4;
+	resend_period = (int) random() % (CCIR_SEND_RIR_TIME / 2);
+	resend_period -= CCIR_SEND_RIR_TIME / 4;
 
 	ret = install_sig_handlers(globals);
 	if (ret)
@@ -2381,9 +2390,13 @@ event_loop(ccir_globals_t *globals)
 		get_event(globals);
 		gettimeofday(&current, NULL);
 
-		if ((current.tv_sec - old.tv_sec) > CCIR_SEND_RIR_TIME) {
+		if ((int)(current.tv_sec - old.tv_sec) >
+				(CCIR_SEND_RIR_TIME + resend_period)) {
 			old = current;
 			send_all_rir(globals);
+
+			resend_period = (int) random() % (CCIR_SEND_RIR_TIME / 2);
+			resend_period -= CCIR_SEND_RIR_TIME / 4;
 		}
 	}
 
