@@ -1990,6 +1990,12 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	rir->subnet[0].id = ntohl(rir->subnet[0].id);
 	rir->subnet[0].rate = ntohs(rir->subnet[0].rate);
 
+	if (rir->router == globals->id) {
+		if (globals->verbose)
+			debug(RDB_PEER, "%s: received our own RIR msg - ignoring", __func__);
+		goto out;
+	}
+
 	if (globals->verbose) {
 		debug(RDB_PEER, "%s: EP %p: received RIR from %s:",
 				__func__, (void*)ep, peer->uri);
@@ -2067,6 +2073,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		}
 	}
 
+out:
 	return;
 }
 
@@ -2151,6 +2158,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			router->id = ~0;
 			qsort(topo->routers, topo->num_routers,
 					sizeof(router), compare_routers);
+			topo->num_routers--;
 			routers = realloc(topo->routers,
 					topo->num_subnets * sizeof(router));
 			if (routers)
