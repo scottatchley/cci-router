@@ -846,10 +846,16 @@ add_subnet_to_router(ccir_globals_t *globals, ccir_router_t *router, uint32_t su
 			__func__, router->id, subnet_id);
 
 		router->count++;
-		router->subnets = realloc(router->subnets, sizeof(*s) * router->count);
-		router->subnets[router->count - 1] = subnet_id;
-
-		qsort(router->subnets, router->count, sizeof(*s), compare_u32);
+		s = realloc(router->subnets, sizeof(*s) * router->count);
+		if (s) {
+			router->subnets = s;
+			router->subnets[router->count - 1] = subnet_id;
+			qsort(router->subnets, router->count, sizeof(*s), compare_u32);
+		} else {
+			debug(RDB_TOPO, "%s: no memory to add subnet 0x%x to router 0x%x",
+					__func__, subnet_id, router->id);
+			router->count--;
+		}
 	}
 
 	if (globals->verbose) {
@@ -887,9 +893,8 @@ add_router_to_topo(ccir_globals_t *globals, ccir_ep_t *ep, uint32_t router_id,
 
 	if (router) {
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: adding ref to router 0x%x "
-				"(count was %u)", __func__, (void*)ep,
-				router->id, router->count);
+			debug(RDB_PEER, "%s: EP %p: already have router 0x%x",
+				__func__, (void*)ep, router->id);
 		}
 
 		/* TODO */
@@ -950,18 +955,24 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 	int ret = 0;
 	uint32_t *r = NULL;
 
-	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(r), compare_u32);
+	r = bsearch(&router_id, subnet->routers, subnet->count, sizeof(*r), compare_u32);
 	if (r) {
 		if (globals->verbose) {
-			debug(RDB_PEER, "%s: EP %p: decref subnet %u (0x%x)"
-				"(count was %u)", __func__, (void*)ep,
-				subnet->id, subnet->id, subnet->count);
+			debug(RDB_PEER, "%s: EP %p: subnet 0x%x removing router 0x%x",
+					__func__, (void*)ep, subnet->id, router_id);
 		}
-		subnet->count--;
-		*r = subnet->routers[subnet->count];
-		subnet->routers[subnet->count] = 0;
+		*r = INT32_MAX;
 		qsort(subnet->routers, subnet->count, sizeof(*r), compare_u32);
-		subnet->routers = realloc(subnet->routers, subnet->count * sizeof(r));
+		subnet->count--;
+		if (subnet->count) {
+			qsort(subnet->routers, subnet->count, sizeof(*r), compare_u32);
+			r = realloc(subnet->routers, subnet->count * sizeof(*r));
+			if (r)
+				subnet->routers = r;
+		} else {
+			free(subnet->routers);
+			subnet->routers = NULL;
+		}
 	}
 
 	if (globals->verbose) {
@@ -1224,13 +1235,18 @@ del_route(ccir_globals_t *globals, ccir_route_t *route)
 	}
 
 	/* Move route to end of array */
-	route->id = ~((uint64_t)0);
+	route->id = INT64_MAX;
 	qsort(topo->routes, topo->num_routes, sizeof(route), compare_routes);
 
 	topo->num_routes--;
-	routes = realloc(topo->routes, sizeof(route) * topo->num_routes);
-	if (routes)
-		topo->routes = routes;
+	if (topo->num_routes) {
+		routes = realloc(topo->routes, sizeof(route) * topo->num_routes);
+		if (routes)
+			topo->routes = routes;
+	} else {
+		free(topo->routes);
+		topo->routes = NULL;
+	}
 
 	qsort(topo->routes, topo->num_routes, sizeof(route), compare_routes);
 
@@ -1418,8 +1434,6 @@ again:
 		/* TODO */
 	}
 
-	print_routes(globals);
-
 	return;
 }
 
@@ -1605,8 +1619,6 @@ again:
 		}
 		/* TODO */
 	}
-
-	print_routes(globals);
 
 	return;
 }
@@ -2122,7 +2134,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			if (subnet->count == 0) {
 				ccir_subnet_t **subnets = NULL;
 
-				subnet->id = ~0;
+				subnet->id = INT32_MAX;
 				qsort(topo->subnets, topo->num_subnets,
 						sizeof(subnet), compare_subnets);
 				free(subnet->routers);
@@ -2155,26 +2167,36 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		if (router->count == 0) {
 			ccir_router_t **routers = NULL;
 
-			router->id = ~0;
+			router->id = INT32_MAX;
 			qsort(topo->routers, topo->num_routers,
 					sizeof(router), compare_routers);
 			topo->num_routers--;
-			routers = realloc(topo->routers,
-					topo->num_subnets * sizeof(router));
-			if (routers)
-				topo->routers = routers;
+			if (topo->num_routers) {
+				routers = realloc(topo->routers,
+						topo->num_routers * sizeof(router));
+				if (routers)
+					topo->routers = routers;
+			} else {
+				free(topo->routers);
+				topo->routers = NULL;
+			}
 
 			free(router->subnets);
 			free(router->pairs);
 			free(router);
 			debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
 				__func__, (void*)ep, del->router);
+		} else {
+			assert(router->count == 0);
 		}
 	}
 
 	if (bye) {
 		void *ctx = CCIR_CTX(((cci_connection_t*)(event->recv.connection))->context);
 		ccir_peer_t *peer = (ccir_peer_t*)ctx;
+
+		peer->router = NULL;
+		peer->id = 0;
 
 		cci_disconnect(peer->c);
 		peer->c = NULL;
@@ -2183,6 +2205,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	}
 
 	if (globals->verbose) {
+		print_routers(globals);
 		print_subnets(globals);
 	}
 
@@ -2921,7 +2944,7 @@ out_w_init:
 			}
 			free(globals->topo->subnets);
 		}
-		if (globals->topo->routers) {
+		if (globals->topo->num_routers) {
 			uint32_t i = 0;
 
 			for (i = 0; i < globals->topo->num_routers; i++) {
@@ -2932,6 +2955,7 @@ out_w_init:
 				free(router);
 			}
 			free(globals->topo->routers);
+			globals->topo->num_routers = 0;
 		}
 	}
 	free(globals->topo);
