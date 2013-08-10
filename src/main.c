@@ -2055,6 +2055,8 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	ret = add_pairs(globals, subnet, router);
 	assert(ret == 0);
 
+	print_routers(globals);
+	print_subnets(globals);
 	print_routes(globals);
 
 	/* TODO forward to N-1 endpoints */
@@ -2121,8 +2123,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		tmp.id = subnet_id;
 		key = &tmp;
 
-		sp = bsearch(&key, topo->subnets,
-				topo->num_subnets, sizeof(subnet),
+		sp = bsearch(&key, topo->subnets, topo->num_subnets, sizeof(subnet),
 				compare_subnets);
 		if (sp)
 			subnet = *sp;
@@ -2184,8 +2185,8 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			free(router->subnets);
 			free(router->pairs);
 			free(router);
-			debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x",
-				__func__, (void*)ep, del->router);
+			debug(RDB_PEER, "%s: EP %p: deleted router id 0x%x (num_routers = %u)",
+				__func__, (void*)ep, del->router, topo->num_routers);
 		} else {
 			assert(router->count == 0);
 		}
