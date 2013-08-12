@@ -602,7 +602,7 @@ compare_u32(const void *pa, const void *pb)
 {
 	uint32_t *a = (uint32_t *)pa, *b = (uint32_t *)pb;
 
-	return (int) *a - (int) *b;
+	return *a > *b ? 1 : *a < *b ? -1 : 0;
 }
 
 static int
@@ -760,7 +760,7 @@ compare_subnets(const void *sp1, const void *sp2)
 	ccir_subnet_t *s1 = *((ccir_subnet_t **)sp1);
 	ccir_subnet_t *s2 = *((ccir_subnet_t **)sp2);
 
-	return (int)(s1->id) - (int)(s2->id);
+	return (s1->id - s2->id) ? 1 : (s1->id < s2->id) ? -2 : 0;
 }
 
 static int
@@ -873,7 +873,7 @@ compare_routers(const void *rp1, const void *rp2)
 	ccir_router_t *r1 = *((ccir_router_t **)rp1);
 	ccir_router_t *r2 = *((ccir_router_t **)rp2);
 
-	return (int)(r1->id) - (int)(r2->id);
+	return r1->id - r2->id ? 1 : r1->id < r2->id ? -1 : 0;
 }
 
 static int
@@ -961,7 +961,7 @@ delete_router_from_subnet(ccir_globals_t *globals, ccir_ep_t *ep, ccir_subnet_t 
 			debug(RDB_PEER, "%s: EP %p: subnet 0x%x removing router 0x%x",
 					__func__, (void*)ep, subnet->id, router_id);
 		}
-		*r = INT32_MAX;
+		*r = UINT32_MAX;
 		qsort(subnet->routers, subnet->count, sizeof(*r), compare_u32);
 		subnet->count--;
 		if (subnet->count) {
@@ -1136,7 +1136,7 @@ compare_paths(const void *pr1, const void *pr2)
 	if (!p1) return -1;
 	if (!p2) return 1;
 
-	return p1->score - p2->score;
+	return p1->score > p2->score ? 1 : p1->score < p2->score ? -1 : 0;
 }
 
 /* Are the two paths identical?
@@ -2135,7 +2135,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			if (subnet->count == 0) {
 				ccir_subnet_t **subnets = NULL;
 
-				subnet->id = INT32_MAX;
+				subnet->id = UINT32_MAX;
 				qsort(topo->subnets, topo->num_subnets,
 						sizeof(subnet), compare_subnets);
 				free(subnet->routers);
@@ -2168,7 +2168,7 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		if (router->count == 0) {
 			ccir_router_t **routers = NULL;
 
-			router->id = INT32_MAX;
+			router->id = UINT32_MAX;
 			qsort(topo->routers, topo->num_routers,
 					sizeof(router), compare_routers);
 			topo->num_routers--;
