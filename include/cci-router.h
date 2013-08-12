@@ -173,7 +173,7 @@ struct ccir_topo {
 	uint32_t num_subnets;	/* number of subnets */
 	ccir_router_t **routers; /* Array of pointers of routers sorted in router ID */
 	uint32_t num_routers;	/* number of routers */
-	void *pairs;		/* tree of all directly connected subnets */
+	ccir_pair_t **pairs;	/* Array of pointers of all directly connected subnets */
 	uint32_t num_pairs;	/* number of pairs */
 	ccir_route_t **routes;	/* Array of pointers for all routes */
 	uint32_t num_routes;	/* Number of routes */

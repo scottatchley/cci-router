@@ -22,7 +22,6 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <assert.h>
-#include <search.h>
 #include <sys/time.h>
 
 #include "cci-router.h"
@@ -605,6 +604,7 @@ compare_u32(const void *pa, const void *pb)
 	return *a > *b ? 1 : *a < *b ? -1 : 0;
 }
 
+#if 0
 static int
 compare_u64(const void *pa, const void *pb)
 {
@@ -612,6 +612,7 @@ compare_u64(const void *pa, const void *pb)
 
 	return *a > *b ? 1 : *a < *b ? -1 : 0;
 }
+#endif
 
 static inline void
 print_router(ccir_globals_t *globals, ccir_router_t *r)
@@ -694,24 +695,12 @@ print_pair(ccir_globals_t *globals, ccir_pair_t *p)
 }
 
 static void
-print_pair_tree(const void *nodep, const VISIT which, const int depth)
+print_pairs(ccir_globals_t *globals)
 {
-	uint32_t *id = *(uint32_t **) nodep;
-	ccir_pair_t *pair = container_of(id, ccir_pair_t, id);
-	ccir_globals_t *globals = pair->g;
+	uint32_t i = 0;
 
-	switch (which) {
-	case preorder:
-		break;
-	case postorder:
-		print_pair(globals, pair);
-		break;
-	case endorder:
-		break;
-	case leaf:
-		print_pair(globals, pair);
-		break;
-	}
+	for (i = 0; i < globals->topo->num_pairs; i++)
+		print_pair(globals, globals->topo->pairs[i]);
 }
 
 static void
@@ -1003,6 +992,15 @@ compare_routes(const void *rp1, const void *rp2)
 	return r1->id > r2->id ? 1 : r1->id < r2->id ? -1 : 0;
 }
 
+static int
+compare_pairs(const void *pp1, const void *pp2)
+{
+	ccir_pair_t *p1 = *((ccir_pair_t **)pp1);
+	ccir_pair_t *p2 = *((ccir_pair_t **)pp2);
+
+	return p1->id > p2->id ? 1 : p1->id < p2->id ? -1 : 0;
+}
+
 static inline uint32_t
 score_path_bw(ccir_globals_t *globals, ccir_path_t *path)
 {
@@ -1053,7 +1051,8 @@ valid_path(ccir_globals_t *globals, ccir_path_t *path)
 	int ret = 0;
 	uint32_t i = 0, a = 0, b = 0;
 	uint64_t ab = 0;
-	void *node = NULL;
+	ccir_pair_t **pp, tmp, *key = &tmp;
+	ccir_topo_t *topo = globals->topo;
 
 	if (globals->verbose) {
 		debug(RDB_TOPO, "%s: validating path %p count %u", __func__,
@@ -1083,8 +1082,10 @@ valid_path(ccir_globals_t *globals, ccir_path_t *path)
 
 		ab = pack_pair_id(a, b);
 
-		node = tfind(&ab, &(globals->topo->pairs), compare_u64);
-		if (!node) {
+		tmp.id = ab;
+
+		pp = bsearch(&key, topo->pairs, topo->num_pairs, sizeof(key), compare_pairs);
+		if (!pp) {
 			if (globals->verbose)
 				debug(RDB_TOPO, "%s: subnets 0x%x and 0x%x not directly "
 						"routed", __func__, a, b);
@@ -1916,9 +1917,9 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 	for (i = 0; i < (int) router->count; i++) {
 		uint32_t lo = 0, hi = 0;
 		uint32_t old = router->subnets[i], *r = NULL;
-		void *node = NULL;
 		uint64_t pair_id = pack_pair_id(old, subnet->id);
-		ccir_pair_t *pair = NULL;
+		ccir_pair_t *pair = NULL, **pp = NULL ,tmp, *key = &tmp;
+		ccir_topo_t *topo = globals->topo;
 
 		if (old == subnet->id)
 			continue;
@@ -1928,11 +1929,14 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 			parse_pair_id(pair_id, &lo, &hi);
 
 		/* Find the pair or create it */
-		node = tfind(&pair_id, &(globals->topo->pairs), compare_u64);
-		if (node) {
-			uint64_t *id = *((uint64_t**)node);
-			pair = container_of(id, ccir_pair_t, id);
+		tmp.id = pair_id;
+
+		pp = bsearch(&key, topo->pairs, topo->num_pairs, sizeof(pair), compare_pairs);
+		if (pp) {
+			pair = *pp;
 		} else {
+			ccir_pair_t **pairs = NULL;
+
 			pair = calloc(1, sizeof(*pair));
 
 			if (!pair) {
@@ -1943,13 +1947,21 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 			pair->count = 0;
 			pair->g = globals;
 
-			node = tsearch(&pair->id, &(globals->topo->pairs), compare_u64);
-			if (!node) {
+			topo->num_pairs++;
+			pairs = realloc(topo->pairs, sizeof(pair) * topo->num_pairs);
+			if (!pairs) {
 				free(pair);
-				/* TODO */
-				assert(node);
+				topo->num_pairs--;
+				debug(RDB_TOPO, "%s: no memory for new pair 0x%x_%x",
+					__func__, lo, hi);
+				ret = ENOMEM;
+				goto out;
 			}
-			globals->topo->num_pairs++;
+			topo->pairs = pairs;
+			topo->pairs[topo->num_pairs - 1] = pair;
+
+			qsort(topo->pairs, topo->num_pairs, sizeof(pair), compare_pairs);
+
 			if (globals->verbose) {
 				debug(RDB_TOPO, "*** added pair 0x%x_%x", lo, hi);
 			}
@@ -1980,8 +1992,9 @@ add_pairs(ccir_globals_t *globals, ccir_subnet_t *subnet, ccir_router_t *router)
 	}
 
 	if (globals->verbose)
-		twalk(globals->topo->pairs, print_pair_tree);
+		print_pairs(globals);
 
+out:
 	return ret;
 }
 
@@ -2928,45 +2941,45 @@ out_w_init:
 		debug(RDB_ALL, "%s is done", argv[0]);
 
 	if (globals->topo) {
-		if (globals->topo->pairs) {
-			void *node = globals->topo->pairs;
+		ccir_topo_t *topo = globals->topo;
 
-			while (node) {
-				uint64_t *id = *((uint64_t**)node);
-				ccir_pair_t *pair = container_of(id, ccir_pair_t, id);
-
-				tdelete(id, &(globals->topo->pairs), compare_u64);
-				free(pair->routers);
-				free(pair);
-				node = globals->topo->pairs;
-			}
-		}
-		if (globals->topo->num_subnets) {
+		if (topo->num_pairs) {
 			uint32_t i = 0;
 
-			for (i = 0; i < globals->topo->num_subnets; i++) {
-				ccir_subnet_t *subnet = globals->topo->subnets[i];
+			for (i = 0; i < topo->num_pairs; i++) {
+				ccir_pair_t *pair = topo->pairs[i];
+
+				free(pair->routers);
+				free(pair);
+			}
+			free(topo->pairs);
+		}
+		if (topo->num_subnets) {
+			uint32_t i = 0;
+
+			for (i = 0; i < topo->num_subnets; i++) {
+				ccir_subnet_t *subnet = topo->subnets[i];
 
 				free(subnet->routers);
 				free(subnet);
 			}
-			free(globals->topo->subnets);
+			free(topo->subnets);
 		}
-		if (globals->topo->num_routers) {
+		if (topo->num_routers) {
 			uint32_t i = 0;
 
-			for (i = 0; i < globals->topo->num_routers; i++) {
-				ccir_router_t *router = globals->topo->routers[i];
+			for (i = 0; i < topo->num_routers; i++) {
+				ccir_router_t *router = topo->routers[i];
 
 				free(router->subnets);
 				free(router->pairs);
 				free(router);
 			}
-			free(globals->topo->routers);
-			globals->topo->num_routers = 0;
+			free(topo->routers);
+			topo->num_routers = 0;
 		}
+		free(topo);
 	}
-	free(globals->topo);
 	free(globals);
 out:
 	return ret;
