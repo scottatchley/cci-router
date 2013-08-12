@@ -2678,15 +2678,12 @@ open_endpoints(ccir_globals_t *globals)
 	/* Make sure that the devices have specified  as and subnet.
 	 * Devices may have zero, one or more routers */
 	for (i = 0; i < cnt; i++) {
-		int j = 0, as = 0, subnet = 0, router = 0, unused = 0;
-		uint32_t rate = 0;
+		int j = 0, as = 0, subnet = 0, router = 0;
 		const char *arg = NULL;
 		cci_device_t *d = devs[i];
 		ccir_ep_t *ep = NULL;
 		ccir_peer_t *peer = NULL;
 		cci_os_handle_t *fd = NULL;
-		ccir_router_t *rp = NULL;
-		ccir_subnet_t *sp = NULL;
 
 		if (!d)
 			break;
@@ -2800,15 +2797,25 @@ open_endpoints(ccir_globals_t *globals)
 		if (globals->verbose)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
 					ep->uri, d->name);
+	}
 
-		ret = add_router_to_topo(globals, ep, 0, 0, ep->subnet, NULL, &rp, &unused);
+	for (i = 0; i < cnt; i++) {
+		ccir_ep_t *ep = es[i];
+		uint32_t rate = 0;
+		ccir_router_t *rp = NULL;
+		ccir_subnet_t *sp = NULL;
+		int unused = 0;
+
+		ret = add_router_to_topo(globals, ep, hash, globals->instance,
+				ep->subnet, NULL, &rp, &unused);
 		assert(ret == 0);
 
 		rate = ep->e->device->rate / 1000000000;
 		if (!rate)
 			rate = 1;
 
-		ret = add_subnet_to_topo(globals, ep, ep->subnet, rate, 0, &sp, &unused);
+		ret = add_subnet_to_topo(globals, ep, ep->subnet, rate,
+				hash, &sp, &unused);
 		assert(ret == 0);
 
 		ret = add_pairs(globals, sp, rp);
