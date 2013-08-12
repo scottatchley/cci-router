@@ -760,7 +760,7 @@ compare_subnets(const void *sp1, const void *sp2)
 	ccir_subnet_t *s1 = *((ccir_subnet_t **)sp1);
 	ccir_subnet_t *s2 = *((ccir_subnet_t **)sp2);
 
-	return (s1->id - s2->id) ? 1 : (s1->id < s2->id) ? -2 : 0;
+	return s1->id > s2->id ? 1 : s1->id < s2->id ? -2 : 0;
 }
 
 static int
@@ -873,7 +873,7 @@ compare_routers(const void *rp1, const void *rp2)
 	ccir_router_t *r1 = *((ccir_router_t **)rp1);
 	ccir_router_t *r2 = *((ccir_router_t **)rp2);
 
-	return r1->id - r2->id ? 1 : r1->id < r2->id ? -1 : 0;
+	return r1->id > r2->id ? 1 : r1->id < r2->id ? -1 : 0;
 }
 
 static int
@@ -1000,7 +1000,7 @@ compare_routes(const void *rp1, const void *rp2)
 	 * else if r1 < r2, return -1
 	 * else return 0
 	 */
-	return (r1->id > r2->id) ? 1 : (r1->id < r2->id) ? -1 : 0;
+	return r1->id > r2->id ? 1 : r1->id < r2->id ? -1 : 0;
 }
 
 static inline uint32_t
