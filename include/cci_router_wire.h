@@ -112,7 +112,7 @@ typedef union ccir_peer_hdr {
 	uint32_t net;
 } ccir_peer_hdr_t;
 
-#define CCIR_PEER_BIT_SHIFT	(3)
+#define CCIR_PEER_BIT_SHIFT	(7)
 #define CCIR_PEER_BIT		((uint8_t)(1 << CCIR_PEER_BIT_SHIFT))
 #define CCIR_IS_PEER_HDR(x)	((uint8_t)(x) & CCIR_PEER_BIT)
 #define CCIR_PEER_HDR_MASK	((uint8_t)~(CCIR_PEER_BIT))
@@ -123,7 +123,7 @@ typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_CONNECT = 0,
 	CCIR_PEER_MSG_DEL,
 	CCIR_PEER_MSG_RIR,
-	CCIR_PEER_MSG_MAX = 7		/* We can never exceed this */
+	CCIR_PEER_MSG_MAX = CCIR_PEER_HDR_MASK	/* We can never exceed this */
 } ccir_peer_hdr_type_t;
 
 static inline const char *
