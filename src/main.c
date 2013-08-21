@@ -1122,8 +1122,21 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 }
 
 static void
-handle_e2e_recv_conn_reply(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+handle_e2e_recv_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event, int flags)
 {
+	int ret = 0;
+	cci_connection_t *c = NULL, *connection = event->recv.connection;
+	ccir_rconn_t *rconn = connection->context;
+
+	if (connection == rconn->src)
+		c = rconn->dst;
+	else
+		c = rconn->src;
+
+	ret = cci_send(c, event->recv.ptr, event->recv.len, NULL, flags);
+	if (ret || flags == CCI_FLAG_BLOCKING)
+		shutdown_rconn(rconn);
+
 	return;
 }
 
@@ -1138,15 +1151,19 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
-		/* forward to src */
-		handle_e2e_recv_conn_reply(globals, ep, event);
-		break;
 	case CCI_E2E_MSG_CONN_ACK:
-		/* forward to dst */
-		break;
 	case CCI_E2E_MSG_SEND:
+	case CCI_E2E_MSG_SEND_ACK:
+	case CCI_E2E_MSG_SEND_ACK_MANY:
+	case CCI_E2E_MSG_SEND_SACK:
+	case CCI_E2E_MSG_SEND_NACK:
+		/* arrive on src, forward to dst or
+		 * arrive on dst, forward to src */
+		handle_e2e_recv_msg(globals, ep, event, 0);
 		break;
 	case CCI_E2E_MSG_BYE:
+		/* forward it, block, then shutdown */
+		handle_e2e_recv_msg(globals, ep, event, CCI_FLAG_BLOCKING);
 		break;
 	default:
 		debug(RDB_E2E, "%s: unhandled %s msg", __func__,
