@@ -72,7 +72,7 @@ static int install_sig_handlers(ccir_globals_t *globals)
 		ret = errno;
 		goto out;
 	}
-out:
+    out:
 	if (ret && verbose)
 		debug(RDB_INFO, "%s: sigaction failed with %s",
 				__func__, strerror(ret));
@@ -277,7 +277,7 @@ connect_peers(ccir_globals_t *globals)
 			}
 		}
 	}
-out:
+    out:
 	return ret;
 }
 
@@ -377,6 +377,162 @@ out:
 	return;
 }
 
+static void
+shutdown_rconn(ccir_rconn_t *rconn)
+{
+	cci_e2e_hdr_t hdr;
+
+	rconn->state = CCIR_RCONN_CLOSING;
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.bye.type = CCI_E2E_MSG_BYE;
+
+	if (rconn->src) {
+		cci_send(rconn->src, &hdr, sizeof(hdr.bye), NULL, CCI_FLAG_BLOCKING);
+		cci_disconnect(rconn->src);
+		rconn->src = NULL;
+	}
+
+	if (rconn->dst) {
+		cci_send(rconn->dst, &hdr, sizeof(hdr.bye), NULL, CCI_FLAG_BLOCKING);
+		cci_disconnect(rconn->dst);
+		rconn->dst = NULL;
+	}
+
+	if (!rconn->is_connecting && !rconn->is_accepting) {
+		free(rconn->client_uri);
+		free(rconn->server_uri);
+		/* poison it */
+		memset(rconn, 0xf, sizeof(*rconn));
+		free(rconn);
+	}
+
+	return;
+}
+
+static void
+handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event_t *event)
+{
+	int ret = 0;
+	char *client = NULL, *server = NULL, *subnet = NULL, *dot = NULL;
+	cci_e2e_hdr_t *hdr = (void*)event->request.data_ptr; /* already in host order */
+	cci_e2e_connect_t *connect = (void*)hdr->connect.data;
+	ccir_rconn_t *rconn = NULL;
+	ccir_ep_t *dst_ep = NULL;
+	ccir_peer_t *peer = NULL;
+	uint32_t i = 0, dst = 0, next = 0;
+	void *ptr = connect->request.data;
+
+	for (i = 0; i < 2; i++)
+		connect->net[i] = ntohl(connect->net[i]);
+
+	/* The URIs are packed without NULL bytes, need to memcpy() them */
+	client = calloc(1, connect->request.src_len + 1 /* \0 */);
+	if (!client) {
+		ret = ENOMEM;
+		goto out;
+	}
+	memcpy(client, ptr, connect->request.src_len);
+	ptr = (void*)((uintptr_t)ptr + (uintptr_t)connect->request.src_len);
+
+	server = calloc(1, connect->request.dst_len + 1 /* \0 */);
+	if (!server) {
+		ret = ENOMEM;
+		goto out;
+	}
+	memcpy(server, ptr, connect->request.dst_len);
+
+	/* can we route this request (from ep->subnet to dst)?
+	 * find ep for next hop, choose peer if more than one. */
+
+	subnet = server + 6; /* len of cci:// */
+	dot = strstr(subnet, ".");
+	if (!dot) {
+		ret = EINVAL;
+		goto out;
+	}
+	subnet = dot + 1;
+	dot = strstr(subnet, ".");
+	if (!dot) {
+		ret = EINVAL;
+		goto out;
+	}
+	*dot = '\0';
+	dst = strtol(subnet, NULL, 0);
+	/* reset dot */
+	*dot = '.';
+
+	ret = find_next_subnet(globals->topo, src_ep->subnet, dst, &next);
+	if (ret)
+		goto out;
+
+	/* find ep for this subnet */
+
+	/* TODO make this a function that uses a static int
+	 * to round-robin the choice of endpoints if more than one.
+	 */
+	for (i = 0; i < globals->ep_cnt; i++) {
+		if (globals->eps[i]->subnet == next) {
+			dst_ep = globals->eps[i];
+			break;
+		}
+	}
+
+	if (!dst_ep) {
+		ret = EHOSTUNREACH;
+		goto out;
+	}
+
+	/* find peer for this subnet */
+
+	/* TODO make this a function that uses a static int
+	 * to round-robin the choice of peers if more than one.
+	 */
+	peer = dst_ep->peers[0];
+
+	rconn = calloc(1, sizeof(*rconn));
+	if (!rconn) {
+		ret = ENOMEM;
+		goto out;
+	}
+	rconn->state = CCIR_RCONN_PENDING;
+	rconn->client_uri = client;
+	rconn->server_uri = server;
+
+	/* put back in network order */
+	hdr->net = htonl(hdr->net);
+	for (i = 0; i < 2; i++)
+		connect->net[i] = htonl(connect->net[i]);
+
+	rconn->is_connecting = 1;
+	ret = cci_connect(dst_ep->e, peer->uri, event->request.data_ptr,
+			event->request.data_len, event->request.attribute,
+			rconn, 0, NULL);
+	if (ret) {
+		rconn->is_connecting = 0;
+		goto out;
+	}
+
+	rconn->is_accepting = 1;
+	/* if we made it here, accept() */
+	ret = cci_accept(event, rconn);
+	if (ret) {
+		rconn->is_accepting = 0;
+	}
+
+    out:
+	if (ret) {
+		cci_reject(event);
+		if (rconn) {
+			shutdown_rconn(rconn);
+		} else {
+			free(client);
+			free(server);
+		}
+	}
+	return;
+}
+
 /* Handle a connection request event.
  *
  * Need to determine if the event if for router-to-router use or
@@ -401,7 +557,7 @@ handle_connect_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *even
 	if (is_peer) {
 		handle_peer_connect_request(globals, ep, event);
 	} else {
-		assert(0);
+		handle_e2e_connect_request(globals, ep, event);
 	}
 
 	return;
@@ -467,6 +623,69 @@ send_all_rir(ccir_globals_t *globals)
 	}
 }
 
+static void
+handle_peer_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	void *ctx = CCIR_CTX(event->accept.context);
+	ccir_peer_t *peer = ctx;
+
+	peer->accepting--;
+	assert(peer->accepting == 0);
+	if (event->accept.status == CCI_SUCCESS) {
+		ccir_ep_t **e = NULL;
+
+		peer->state = CCIR_PEER_CONNECTED;
+#if 0
+		/* TODO disconnect? */
+		if (peer->c) {
+			cci_disconnect(peer->c);
+			peer->c = NULL;
+		}
+		assert(peer->c == NULL);
+#endif
+		peer->c = event->accept.connection;
+		ep->need_connect--;
+
+		if (verbose)
+			debug(RDB_PEER, "%s: accepted %s on endpoint %s (%s) "
+					"(c=%p)",
+					__func__, peer->uri, ep->uri,
+					ccir_peer_state_str(peer->state),
+					(void*)peer->c);
+		/* TODO exchange routing table */
+		for (e = globals->eps; *e != NULL; e++)
+			send_rir(globals, *e, peer);
+	} else {
+		debug(RDB_PEER, "%s: accept event for %s returned %s",
+			__func__, peer->uri,
+			cci_strerror(ep->e, event->accept.status));
+		if (!peer->connecting)
+			peer->state = CCIR_PEER_INIT;
+	}
+	return;
+}
+
+static void
+handle_e2e_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	ccir_rconn_t *rconn = event->accept.context;
+
+	rconn->is_accepting = 0;
+	rconn->dst = event->accept.connection; /* may be NULL */
+
+	if (event->accept.status != CCI_SUCCESS ||
+		rconn->state == CCIR_RCONN_CLOSING) {
+
+		debug(RDB_PEER, "%s: accept() failed with %s for connection "
+				"from %s to %s", __func__,
+				cci_strerror(ep->e, event->accept.status),
+				rconn->client_uri, rconn->server_uri);
+
+		shutdown_rconn(rconn);
+	}
+	return;
+}
+
 /* Handle an accept event.
  *
  * Need to determine if the event if for router-to-router use or
@@ -482,53 +701,91 @@ static void
 handle_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	uint32_t peer_accept = CCIR_IS_PEER_CTX(event->accept.context);
-	void *ctx = CCIR_CTX(event->accept.context);
 
 	if (peer_accept) {
-		ccir_peer_t *peer = ctx;
-
-		peer->accepting--;
-		assert(peer->accepting == 0);
-		if (event->accept.status == CCI_SUCCESS) {
-			ccir_ep_t **e = NULL;
-
-			peer->state = CCIR_PEER_CONNECTED;
-#if 0
-			/* TODO disconnect? */
-			if (peer->c) {
-				cci_disconnect(peer->c);
-				peer->c = NULL;
-			}
-			assert(peer->c == NULL);
-#endif
-			peer->c = event->accept.connection;
-			ep->need_connect--;
-
-			if (verbose)
-				debug(RDB_PEER, "%s: accepted %s on endpoint %s (%s) "
-						"(c=%p)",
-						__func__, peer->uri, ep->uri,
-						ccir_peer_state_str(peer->state),
-						(void*)peer->c);
-			/* TODO exchange routing table */
-			for (e = globals->eps; *e != NULL; e++)
-				send_rir(globals, *e, peer);
-		} else {
-			debug(RDB_PEER, "%s: accept event for %s returned %s",
-				__func__, peer->uri,
-				cci_strerror(ep->e, event->accept.status));
-			if (!peer->connecting)
-				peer->state = CCIR_PEER_INIT;
-		}
+		handle_peer_accept(globals, ep, event);
 	} else {
-		/* e2e accept */
-		assert(0);
+		handle_e2e_accept(globals, ep, event);
 	}
 
 	return;
 }
 
-/* Handle a accept completion event.
+static void
+handle_peer_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	void *ctx = CCIR_CTX(event->connect.context);
+	ccir_peer_t *peer = ctx;
+
+	peer->connecting--;
+
+	if (event->connect.status == CCI_SUCCESS) {
+		ccir_ep_t **e = NULL;
+
+		assert(peer->c == NULL);
+		peer->c = event->connect.connection;
+		peer->state = CCIR_PEER_CONNECTED;
+
+		ep->need_connect--;
+
+		if (verbose)
+			debug(RDB_PEER, "%s: connected to %s on endpoint %s (%s) "
+					"(c=%p)",
+					__func__, peer->uri, ep->uri,
+					ccir_peer_state_str(peer->state),
+					(void*)peer->c);
+
+		/* TODO exchange routing table */
+		/* send our rir */
+		for (e = globals->eps; *e != NULL; e++)
+			send_rir(globals, *e, peer);
+		/* send forwarded rir */
+	} else {
+		struct timeval now = { 0, 0 };
+
+		if (!peer->accepting)
+			peer->state = CCIR_PEER_INIT;
+
+		if (peer->state != CCIR_PEER_CONNECTED) {
+			gettimeofday(&now, NULL);
+			/* Set the next attempt to now + 2^N
+			 * where N is the number of attempts.
+			 * This provides an exponential backoff.
+			 */
+			peer->next_attempt = now.tv_sec + (1 << peer->attempts);
+
+			if (event->connect.status == CCI_ECONNREFUSED) {
+				debug(RDB_PEER, "%s: peer %s refused a connection "
+						"from endpoint %s", __func__,
+						peer->uri, ep->uri);
+			}
+		}
+	}
+	return;
+}
+
+static void
+handle_e2e_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	ccir_rconn_t *rconn = event->connect.context;
+
+	rconn->is_connecting = 0;
+	rconn->src = event->connect.connection; /* may be NULL */
+
+	if (event->connect.status != 0 ||
+		rconn->state == CCIR_RCONN_CLOSING) {
+
+		debug(RDB_PEER, "%s: connect() failed with %s for connection "
+				"from %s to %s", __func__,
+				cci_strerror(ep->e, event->connect.status),
+				rconn->client_uri, rconn->server_uri);
+
+		shutdown_rconn(rconn);
+	}
+	return;
+}
+
+/* Handle a connect completion event.
  *
  * Need to determine if the event if for router-to-router use or
  * for a client.
@@ -537,60 +794,11 @@ static void
 handle_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	uint32_t peer_connect = CCIR_IS_PEER_CTX(event->connect.context);
-	void *ctx = CCIR_CTX(event->connect.context);
 
 	if (peer_connect) {
-		ccir_peer_t *peer = ctx;
-
-		peer->connecting--;
-
-		if (event->connect.status == CCI_SUCCESS) {
-			ccir_ep_t **e = NULL;
-
-			assert(peer->c == NULL);
-			peer->c = event->connect.connection;
-			peer->state = CCIR_PEER_CONNECTED;
-
-			ep->need_connect--;
-
-			if (verbose)
-				debug(RDB_PEER, "%s: connected to %s on endpoint %s (%s) "
-						"(c=%p)",
-						__func__, peer->uri, ep->uri,
-						ccir_peer_state_str(peer->state),
-						(void*)peer->c);
-
-			/* TODO exchange routing table */
-			/* send our rir */
-			for (e = globals->eps; *e != NULL; e++)
-				send_rir(globals, *e, peer);
-			/* send forwarded rir */
-		} else {
-			struct timeval now = { 0, 0 };
-
-			if (!peer->accepting)
-				peer->state = CCIR_PEER_INIT;
-
-			if (peer->state != CCIR_PEER_CONNECTED) {
-				gettimeofday(&now, NULL);
-				/* Set the next attempt to now + 2^N
-				 * where N is the number of attempts.
-				 * This provides an exponential backoff.
-				 */
-				peer->next_attempt = now.tv_sec + (1 << peer->attempts);
-
-				if (event->connect.status == CCI_ECONNREFUSED) {
-					debug(RDB_PEER, "%s: peer %s refused a connection "
-							"from endpoint %s", __func__,
-							peer->uri, ep->uri);
-				}
-			}
-		}
+		handle_peer_connect(globals, ep, event);
 	} else {
-		/* Connect completed for routed connection. Wait for end-to-end
-		 * ACCEPT or REJECT.
-		 */
-		/* TODO add connection to routed connection struct */
+		handle_e2e_connect(globals, ep, event);
 	}
 
 	return;
@@ -698,7 +906,7 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		}
 	}
 
-out:
+    out:
 	return;
 }
 
@@ -724,6 +932,11 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 			debug(RDB_PEER, "%s: EP %p: peer %s deleting subnet 0x%x",
 				__func__, (void*)ep, peer->uri, ntohl(del->subnet[i]));
 	}
+
+	/* TODO if we remove a router and/or subnet, we need to remove
+	 *      the affected pairs. If we lose a pair, then we may lose
+	 *      paths and/or routes.
+	 */
 
 	/* find subnets, if find router, remove router && decref subnet */
 	for (i = 0; i < hdr->del.count; i++) {
@@ -811,6 +1024,33 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	}
 }
 
+static void
+handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	cci_e2e_hdr_t *hdr = (void*) event->recv.ptr;
+	cci_e2e_msg_type_t type = CCI_E2E_MSG_INVALID;
+
+	hdr->net = ntohl(hdr->net);
+	type = hdr->generic.type;
+
+	switch (type) {
+	case CCI_E2E_MSG_CONN_REPLY:
+		break;
+	case CCI_E2E_MSG_CONN_ACK:
+		break;
+	case CCI_E2E_MSG_SEND:
+		break;
+	case CCI_E2E_MSG_BYE:
+		break;
+	default:
+		debug(RDB_E2E, "%s: unhandled %s msg", __func__,
+				cci_e2e_msg_type_str(type));
+		break;
+	}
+
+	return;
+}
+
 /* Handle a receive completion event.
  *
  * Need to determine if the event if for router-to-router use or
@@ -832,8 +1072,7 @@ handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 		handle_peer_recv(globals, ep, peer, event);
 	} else {
-		/* TODO */
-		assert(0);
+		handle_e2e_recv(globals, ep, event);
 	}
 	return;
 }
@@ -959,7 +1198,7 @@ get_event(ccir_globals_t *globals)
 						__func__, cci_strerror(ep->e, ret));
 		}
 	} while (found && !globals->shutdown);
-out:
+    out:
 	return ret;
 }
 
@@ -1005,7 +1244,7 @@ event_loop(ccir_globals_t *globals)
 
 	if (verbose)
 		debug(RDB_ALL, "Exiting %s", __func__);
-out:
+    out:
 	return;
 }
 
@@ -1402,7 +1641,7 @@ open_endpoints(ccir_globals_t *globals)
 	globals->eps = es;
 	globals->ep_cnt = cnt;
 	globals->id = hash;
-out:
+    out:
 	if (ret)
 		close_endpoints(globals);
 
@@ -1485,7 +1724,7 @@ main(int argc, char *argv[])
 
 	close_endpoints(globals);
 
-out_w_init:
+    out_w_init:
 	ret = cci_finalize();
 	if (ret) {
 		debug(RDB_ALL, "%s", "Unable to finalize CCI");
@@ -1536,6 +1775,6 @@ out_w_init:
 		free(topo);
 	}
 	free(globals);
-out:
+    out:
 	return ret;
 }

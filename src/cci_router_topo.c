@@ -310,7 +310,7 @@ compare_subnets(const void *sp1, const void *sp2)
 	ccir_subnet_t *s1 = *((ccir_subnet_t **)sp1);
 	ccir_subnet_t *s2 = *((ccir_subnet_t **)sp2);
 
-	return s1->id > s2->id ? 1 : s1->id < s2->id ? -2 : 0;
+	return s1->id > s2->id ? 1 : s1->id < s2->id ? -1 : 0;
 }
 
 int
@@ -1526,5 +1526,43 @@ add_pairs(ccir_topo_t *topo, ccir_subnet_t *subnet, ccir_router_t *router)
 		print_pairs(topo);
 
 out:
+	return ret;
+}
+
+int
+find_next_subnet(ccir_topo_t *topo, uint32_t src, uint32_t dst, uint32_t *next)
+{
+	int ret = 0, reverse = 0;
+	uint32_t lo = 0, hi = 0;
+	uint64_t route_id = pack_id(src, dst);
+	ccir_route_t *route = NULL, **rp = NULL, tmp, *key = &tmp;
+
+	parse_id(route_id, &lo, &hi);
+	if (lo != src)
+		reverse = 1;
+
+	tmp.id = route_id;
+	rp = bsearch(&key, topo->routes, topo->num_routes, sizeof(route), compare_routes);
+	if (rp) {
+		route = *rp;
+		assert(route->count != 0);
+	}
+
+	if (route) {
+		ccir_path_t *path = route->paths[0];
+		assert(path->count >= 2);
+
+		if (!reverse) {
+			assert(src = path->subnets[0]);
+			*next = path->subnets[1];
+		} else {
+			assert(src = path->subnets[path->count - 1]);
+			*next = path->subnets[path->count - 2];
+		}
+	} else {
+		ret = EHOSTUNREACH;
+		*next = 0;
+	}
+
 	return ret;
 }

@@ -13,6 +13,7 @@
 #include "cci.h"
 #include "cci_router_wire.h"
 #include "cci_router_topo.h"
+#include "cci_router_e2e.h"
 #include "cci_router_debug.h"
 
 #include "bsd/queue.h"
@@ -75,24 +76,6 @@ typedef struct ccir_peer {
 	uint8_t connecting;	/* Waiting on connect event */
 	uint8_t accepting;	/* Waiting on accept/reject event */
 } ccir_peer_t;
-
-typedef enum ccir_rconn_state {
-	CCIR_RCONN_CLOSED = -2,	/* Closed ready for cleanup */
-	CCIR_RCONN_CLOSING = -1, /* Closing */
-	CCIR_RCONN_INIT = 0,	/* Initial state */
-	CCIR_RCONN_ACTIVE,	/* Sent dst connect request, waiting on completion */
-	CCIR_RCONN_PASSIVE,	/* Received src conn request, waiting on completion */
-	CCIR_RCONN_PENDING,	/* Wainting on E2E ACCEPT or REJECT */
-	CCIR_RCONN_CONNECTED	/* Forwarding enabled */
-} ccir_rconn_state_t;
-
-/* Routed connection */
-typedef struct ccir_rconn {
-	TAILQ_ENTRY(ccir_ep) entry; /* For ep->rconns */
-	cci_connection_t *src;	/* Source (passive) connection */
-	cci_connection_t *dst;	/* Destination (active) connection */
-	ccir_rconn_state_t state; /* State */
-} ccir_rconn_t;
 
 typedef struct ccir_ep {
 	cci_endpoint_t *e;	/* CCI endpoint for a device */

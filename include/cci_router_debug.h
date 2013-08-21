@@ -20,6 +20,7 @@ extern uint32_t verbose;
 #define RDB_INFO	(1 << 2)	/* non-specific, low value */
 #define RDB_CONFIG	(1 << 3)	/* configuration info */
 #define RDB_TOPO	(1 << 4)	/* topology info */
+#define RDB_E2E		(1 << 5)	/* E2E protocol info */
 
 #define RDB_ALL		(~0)		/* print all */
 
