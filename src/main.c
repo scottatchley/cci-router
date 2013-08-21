@@ -410,17 +410,77 @@ shutdown_rconn(ccir_rconn_t *rconn)
 	return;
 }
 
+static int
+parse_e2e_uri(const char *uri, uint32_t *asp, uint32_t *snp, char **base)
+{
+	int ret = 0;
+	uint32_t as = 0, subnet = 0;
+	char *p = NULL, *dot = NULL;
+
+	if (memcmp(uri, "cci://", 6)) {
+		ret = EINVAL;
+		goto out;
+	}
+
+	p = (char*) uri + 6; /* start of as id */
+	dot = strstr(p, ".");
+	if (!dot) {
+		ret = EINVAL;
+		goto out;
+	}
+	*dot = '\0';
+	as = strtol(p, NULL, 0);
+	*dot = '.';
+
+	p = dot + 1;
+	dot = strstr(p, ".");
+	if (!dot) {
+		ret = EINVAL;
+		goto out;
+	}
+	*dot = '\0';
+	subnet = strtol(p, NULL, 0);
+	*dot = '.';
+
+	if (asp)
+		*asp = as;
+	if (snp)
+		*snp = subnet;
+	if (base)
+		*base = dot + 1;
+    out:
+	return ret;
+}
+
+static int
+get_uri_prefix_len(const char *uri, int *len)
+{
+	int ret = 0;
+	char *colon = NULL;
+
+	colon = strstr(uri, "://");
+	if (!colon) {
+		ret = EINVAL;
+		goto out;
+	}
+
+	*len = colon - uri + 3; /* include :// in the length */
+
+    out:
+	return ret;
+}
+
 static void
 handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event_t *event)
 {
-	int ret = 0;
-	char *client = NULL, *server = NULL, *subnet = NULL, *dot = NULL;
+	int ret = 0, src_is_router = 0, dst_is_router = 0;
+	char *client = NULL, *server = NULL, *uri = NULL, *base = NULL, *local_uri = NULL;
 	cci_e2e_hdr_t *hdr = (void*)event->request.data_ptr; /* already in host order */
 	cci_e2e_connect_t *connect = (void*)hdr->connect.data;
 	ccir_rconn_t *rconn = NULL;
 	ccir_ep_t *dst_ep = NULL;
 	ccir_peer_t *peer = NULL;
-	uint32_t i = 0, dst = 0, next = 0;
+	uint32_t i = 0, src_subnet = 0, dst_subnet = 0, next_subnet = 0;
 	void *ptr = connect->request.data;
 
 	for (i = 0; i < 2; i++)
@@ -442,27 +502,25 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	}
 	memcpy(server, ptr, connect->request.dst_len);
 
+	/* are the src or dst routers or e2e clients?
+	 * if the client or server URIs contain connected subnets,
+	 * they are not routers.
+	 */
+	ret = parse_e2e_uri(client, NULL, &src_subnet, NULL);
+	if (ret)
+		goto out;
+
+	if (src_subnet != src_ep->subnet)
+		src_is_router = 1;
+
+	ret = parse_e2e_uri(server, NULL, &dst_subnet, &base);
+	if (ret)
+		goto out;
+
 	/* can we route this request (from ep->subnet to dst)?
 	 * find ep for next hop, choose peer if more than one. */
 
-	subnet = server + 6; /* len of cci:// */
-	dot = strstr(subnet, ".");
-	if (!dot) {
-		ret = EINVAL;
-		goto out;
-	}
-	subnet = dot + 1;
-	dot = strstr(subnet, ".");
-	if (!dot) {
-		ret = EINVAL;
-		goto out;
-	}
-	*dot = '\0';
-	dst = strtol(subnet, NULL, 0);
-	/* reset dot */
-	*dot = '.';
-
-	ret = find_next_subnet(globals->topo, src_ep->subnet, dst, &next);
+	ret = find_next_subnet(globals->topo, src_ep->subnet, dst_subnet, &next_subnet);
 	if (ret)
 		goto out;
 
@@ -472,7 +530,7 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	 * to round-robin the choice of endpoints if more than one.
 	 */
 	for (i = 0; i < globals->ep_cnt; i++) {
-		if (globals->eps[i]->subnet == next) {
+		if (globals->eps[i]->subnet == next_subnet) {
 			dst_ep = globals->eps[i];
 			break;
 		}
@@ -483,12 +541,43 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 		goto out;
 	}
 
-	/* find peer for this subnet */
+	if (dst_subnet != dst_ep->subnet)
+		dst_is_router = 1;
 
-	/* TODO make this a function that uses a static int
-	 * to round-robin the choice of peers if more than one.
+	/* Are we connected to the dst subnet? If so, convert uri
+	 * to native and connect to e2e client.
+	 *
+	 * If not, forward to next router.
 	 */
-	peer = dst_ep->peers[0];
+
+	if (!dst_is_router) {
+		int prefix_len = 0, base_len = 0, len = 0;
+
+		ret = get_uri_prefix_len(dst_ep->uri, &prefix_len);
+		if (ret)
+			goto out;
+
+		base_len = strlen(base);
+		len = prefix_len + base_len;
+
+		local_uri = calloc(1, len + 1); /* len + \0 */
+		if (!local_uri) {
+			ret = ENOMEM;
+			goto out;
+		}
+		snprintf(local_uri, prefix_len, "%s", dst_ep->uri);
+		snprintf(local_uri + prefix_len, base_len, "%s", base);
+
+		uri = local_uri;
+	} else {
+		/* find peer for this subnet */
+
+		/* TODO make this a function that uses a static int
+		 * to round-robin the choice of peers if more than one.
+		 */
+		peer = dst_ep->peers[0];
+		uri = peer->uri;
+	}
 
 	rconn = calloc(1, sizeof(*rconn));
 	if (!rconn) {
@@ -498,6 +587,8 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	rconn->state = CCIR_RCONN_PENDING;
 	rconn->client_uri = client;
 	rconn->server_uri = server;
+	rconn->src_is_router = src_is_router;
+	rconn->dst_is_router = dst_is_router;
 
 	/* put back in network order */
 	hdr->net = htonl(hdr->net);
@@ -505,7 +596,7 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 		connect->net[i] = htonl(connect->net[i]);
 
 	rconn->is_connecting = 1;
-	ret = cci_connect(dst_ep->e, peer->uri, event->request.data_ptr,
+	ret = cci_connect(dst_ep->e, uri, event->request.data_ptr,
 			event->request.data_len, event->request.attribute,
 			rconn, 0, NULL);
 	if (ret) {
@@ -521,6 +612,8 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	}
 
     out:
+	free(local_uri);
+
 	if (ret) {
 		cci_reject(event);
 		if (rconn) {
@@ -995,10 +1088,14 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 }
 
 static void
-handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
-		cci_event_t *event)
+handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
+	cci_connection_t *connection = event->recv.connection;
+	void *ctx = CCIR_CTX(connection->context);
+	ccir_peer_t *peer = (ccir_peer_t*)ctx;
 	ccir_peer_hdr_t *hdr = (void*)event->recv.ptr; /* in net order */
+
+	assert(peer->c == connection);
 
 	hdr->net = ntohl(hdr->net);
 
@@ -1025,18 +1122,27 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 }
 
 static void
+handle_e2e_recv_conn_reply(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	return;
+}
+
+static void
 handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	cci_e2e_hdr_t *hdr = (void*) event->recv.ptr;
-	cci_e2e_msg_type_t type = CCI_E2E_MSG_INVALID;
+	cci_e2e_msg_type_t type = 0;
 
 	hdr->net = ntohl(hdr->net);
 	type = hdr->generic.type;
 
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
+		/* forward to src */
+		handle_e2e_recv_conn_reply(globals, ep, event);
 		break;
 	case CCI_E2E_MSG_CONN_ACK:
+		/* forward to dst */
 		break;
 	case CCI_E2E_MSG_SEND:
 		break;
@@ -1060,17 +1166,10 @@ static void
 handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	cci_connection_t *connection = event->recv.connection;
-	int is_peer = 0;
-
-	is_peer = CCIR_IS_PEER_CTX(connection->context);
+	int is_peer = CCIR_IS_PEER_CTX(connection->context);
 
 	if (is_peer) {
-		void *ctx = CCIR_CTX(connection->context);
-		ccir_peer_t *peer = (ccir_peer_t*)ctx;
-
-		assert(peer->c == connection);
-
-		handle_peer_recv(globals, ep, peer, event);
+		handle_peer_recv(globals, ep, event);
 	} else {
 		handle_e2e_recv(globals, ep, event);
 	}
