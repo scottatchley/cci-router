@@ -417,7 +417,7 @@ parse_e2e_uri(const char *uri, uint32_t *asp, uint32_t *snp, char **base)
 	uint32_t as = 0, subnet = 0;
 	char *p = NULL, *dot = NULL;
 
-	if (memcmp(uri, "cci://", 6)) {
+	if (memcmp(uri, "e2e://", 6)) {
 		ret = EINVAL;
 		goto out;
 	}
