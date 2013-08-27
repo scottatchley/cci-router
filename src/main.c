@@ -410,66 +410,6 @@ shutdown_rconn(ccir_rconn_t *rconn)
 	return;
 }
 
-static int
-parse_e2e_uri(const char *uri, uint32_t *asp, uint32_t *snp, char **base)
-{
-	int ret = 0;
-	uint32_t as = 0, subnet = 0;
-	char *p = NULL, *dot = NULL;
-
-	if (memcmp(uri, "e2e://", 6)) {
-		ret = EINVAL;
-		goto out;
-	}
-
-	p = (char*) uri + 6; /* start of as id */
-	dot = strstr(p, ".");
-	if (!dot) {
-		ret = EINVAL;
-		goto out;
-	}
-	*dot = '\0';
-	as = strtol(p, NULL, 0);
-	*dot = '.';
-
-	p = dot + 1;
-	dot = strstr(p, ".");
-	if (!dot) {
-		ret = EINVAL;
-		goto out;
-	}
-	*dot = '\0';
-	subnet = strtol(p, NULL, 0);
-	*dot = '.';
-
-	if (asp)
-		*asp = as;
-	if (snp)
-		*snp = subnet;
-	if (base)
-		*base = dot + 1;
-    out:
-	return ret;
-}
-
-static int
-get_uri_prefix_len(const char *uri, int *len)
-{
-	int ret = 0;
-	char *colon = NULL;
-
-	colon = strstr(uri, "://");
-	if (!colon) {
-		ret = EINVAL;
-		goto out;
-	}
-
-	*len = colon - uri + 3; /* include :// in the length */
-
-    out:
-	return ret;
-}
-
 static void
 handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event_t *event)
 {
@@ -506,14 +446,14 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	 * if the client or server URIs contain connected subnets,
 	 * they are not routers.
 	 */
-	ret = parse_e2e_uri(client, NULL, &src_subnet, NULL);
+	ret = cci_e2e_parse_uri(client, NULL, &src_subnet, NULL);
 	if (ret)
 		goto out;
 
 	if (src_subnet != src_ep->subnet)
 		src_is_router = 1;
 
-	ret = parse_e2e_uri(server, NULL, &dst_subnet, &base);
+	ret = cci_e2e_parse_uri(server, NULL, &dst_subnet, &base);
 	if (ret)
 		goto out;
 
@@ -553,7 +493,7 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	if (!dst_is_router) {
 		int prefix_len = 0, base_len = 0, len = 0;
 
-		ret = get_uri_prefix_len(dst_ep->uri, &prefix_len);
+		ret = cci_e2e_uri_prefix_len(dst_ep->uri, &prefix_len);
 		if (ret)
 			goto out;
 
