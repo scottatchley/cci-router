@@ -414,7 +414,8 @@ static void
 handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event_t *event)
 {
 	int ret = 0, src_is_router = 0, dst_is_router = 0;
-	char *client = NULL, *server = NULL, *uri = NULL, *base = NULL, *local_uri = NULL;
+	char *client = NULL, *server = NULL, *uri = NULL, *local_uri = NULL;
+	const char *base = NULL;
 	cci_e2e_hdr_t *hdr = (void*)event->request.data_ptr; /* already in host order */
 	cci_e2e_connect_t *connect = (void*)hdr->connect.data;
 	ccir_rconn_t *rconn = NULL;
@@ -427,20 +428,20 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 		connect->net[i] = ntohl(connect->net[i]);
 
 	/* The URIs are packed without NULL bytes, need to memcpy() them */
-	client = calloc(1, connect->request.src_len + 1 /* \0 */);
-	if (!client) {
-		ret = ENOMEM;
-		goto out;
-	}
-	memcpy(client, ptr, connect->request.src_len);
-	ptr = (void*)((uintptr_t)ptr + (uintptr_t)connect->request.src_len);
-
 	server = calloc(1, connect->request.dst_len + 1 /* \0 */);
 	if (!server) {
 		ret = ENOMEM;
 		goto out;
 	}
 	memcpy(server, ptr, connect->request.dst_len);
+	ptr = (void*)((uintptr_t)ptr + (uintptr_t)connect->request.dst_len);
+
+	client = calloc(1, connect->request.src_len + 1 /* \0 */);
+	if (!client) {
+		ret = ENOMEM;
+		goto out;
+	}
+	memcpy(client, ptr, connect->request.src_len);
 
 	/* are the src or dst routers or e2e clients?
 	 * if the client or server URIs contain connected subnets,
