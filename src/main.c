@@ -1514,7 +1514,7 @@ static int
 open_endpoints(ccir_globals_t *globals)
 {
 	int ret = 0, i = 0, cnt = 0;
-	cci_device_t * const *devs = NULL;
+	cci_device_t * const *devs = NULL, * const *d = NULL;
 	ccir_ep_t **es = NULL;
 	uint32_t hash = 0;
 
@@ -1541,16 +1541,15 @@ open_endpoints(ccir_globals_t *globals)
 
 	/* Make sure that the devices have specified  as and subnet.
 	 * Devices may have zero, one or more routers */
-	for (i = 0; i < cnt; i++) {
+	for (d = devs; *d; d++) {
 		int j = 0, as = 0, subnet = 0, router = 0;
 		const char *arg = NULL;
-		cci_device_t *d = devs[i];
 		ccir_ep_t *ep = NULL;
 		ccir_peer_t *peer = NULL;
 		cci_os_handle_t *fd = NULL;
 
-		if (!d)
-			break;
+		if (0 == strcmp((*d)->transport, "e2e"))
+			continue;
 
 		ep = calloc(1, sizeof(*ep));
 		if (!ep) {
@@ -1565,8 +1564,9 @@ open_endpoints(ccir_globals_t *globals)
 			goto out;
 		}
 
+		if ((*d)->conf_argv) {
 		for (j = 0; ;j++) {
-			arg = d->conf_argv[j];
+			arg = (*d)->conf_argv[j];
 			if (!arg)
 				break;
 			if (0 == strncmp("as=", arg, 3)) {
@@ -1581,7 +1581,7 @@ open_endpoints(ccir_globals_t *globals)
 						"%s: Device [%s] has more "
 						"than %d router= keyword/values. "
 						"Ignoring %s.",
-						__func__, d->name, router, arg);
+						__func__, (*d)->name, router, arg);
 					continue;
 				}
 
@@ -1598,15 +1598,16 @@ open_endpoints(ccir_globals_t *globals)
 				ep->peers[router++] = peer;
 			}
 		}
+		}
 
 		if (!as || !subnet) {
 			debug(RDB_EP, "Device [%s] is missing keyword/values "
-					"for as= and/or subnet=", d->name);
+					"for as= and/or subnet=", (*d)->name);
 			ret = EINVAL;
 			goto out;
 		} else if ((as > 1) || (subnet > 1)) {
 			debug(RDB_EP, "Device [%s] has more than one keyword/value "
-					"for as= or subnet=", d->name);
+					"for as= or subnet=", (*d)->name);
 			ret = EINVAL;
 			goto out;
 		}
@@ -1628,11 +1629,11 @@ open_endpoints(ccir_globals_t *globals)
 		if (globals->blocking)
 			fd = &ep->fd;
 
-		ret = cci_create_endpoint(d, 0, &(ep->e), fd);
+		ret = cci_create_endpoint(*d, 0, &(ep->e), fd);
 		if (ret) {
 			debug(RDB_EP, "Unable to create endpoint "
 					"on device %s (%s)",
-					devs[i]->name,
+					(*d)->name,
 					cci_strerror(NULL, ret));
 			goto out;
 		}
@@ -1651,7 +1652,7 @@ open_endpoints(ccir_globals_t *globals)
 		if (strlen(ep->uri) > CCIR_URI_MAX_LEN) {
 			debug(RDB_EP, "%s: Device [%s] endpoint URI [%s] is too long. "
 					"Closing endpoint.",
-				__func__, d->name, ep->uri);
+				__func__, (*d)->name, ep->uri);
 			ret = EINVAL;
 			goto out;
 		}
@@ -1660,9 +1661,12 @@ open_endpoints(ccir_globals_t *globals)
 
 		if (verbose)
 			debug(RDB_EP, "%s: opened %s on device %s", __func__,
-					ep->uri, d->name);
+					ep->uri, (*d)->name);
+
+		i++;
 	}
 
+	cnt = i;
 	for (i = 0; i < cnt; i++) {
 		ccir_ep_t *ep = es[i];
 		uint32_t rate = 0;
