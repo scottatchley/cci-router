@@ -506,8 +506,8 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 			ret = ENOMEM;
 			goto out;
 		}
-		snprintf(local_uri, prefix_len, "%s", dst_ep->uri);
-		snprintf(local_uri + prefix_len, base_len, "%s", base);
+		snprintf(local_uri, prefix_len + 1, "%s", dst_ep->uri);
+		snprintf(local_uri + prefix_len, base_len + 1, "%s", base);
 
 		uri = local_uri;
 	} else {
