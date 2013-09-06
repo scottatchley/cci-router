@@ -1089,6 +1089,7 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 	hdr->net = ntohl(hdr->net);
 	type = hdr->generic.type;
+	hdr->net = htonl(hdr->net);
 
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
