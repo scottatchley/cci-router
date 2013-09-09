@@ -1082,8 +1082,27 @@ handle_e2e_recv_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event, 
 }
 
 static void
+adjust_e2e_mss(ccir_rconn_t *rconn, cci_e2e_hdr_t *hdr)
+{
+	uint16_t mss = 0;
+
+	hdr->net = ntohl(hdr->net);
+	mss = hdr->conn_reply.mss;
+	if (rconn->src->max_send_size < mss)
+		mss = rconn->src->max_send_size;
+	if (rconn->dst->max_send_size < mss)
+		mss = rconn->dst->max_send_size;
+	hdr->conn_reply.mss = mss;
+	hdr->net = htonl(hdr->net);
+
+	return;
+}
+
+static void
 handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
+	cci_connection_t *connection = event->recv.connection;
+	ccir_rconn_t *rconn = connection->context;
 	cci_e2e_hdr_t *hdr = (void*) event->recv.ptr;
 	cci_e2e_msg_type_t type = 0;
 
@@ -1093,6 +1112,7 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
+		adjust_e2e_mss(rconn, hdr);
 	case CCI_E2E_MSG_CONN_ACK:
 	case CCI_E2E_MSG_SEND:
 	case CCI_E2E_MSG_SEND_ACK:
