@@ -16,9 +16,9 @@ AC_DEFUN([CCIR_CHECK_CCI],[
           AC_SUBST([CPPFLAGS],["-I$cci_dir/include $CPPFLAGS_save"]))
     LDFLAGS_save="$LDFLAGS"
     AS_IF([test ! -z "$cci_libdir"],
-          AC_SUBST([LDFLAGS],["-L$cci_libdir $LDFLAGS_save"]))
+          AC_SUBST([LDFLAGS],(["-L$cci_libdir -Wl,-rpath,$cci_libdir $LDFLAGS_save"])))
     AS_IF([test ! -z "$cci_dir" -a -z "$cci_libdir"],
-          AC_SUBST([LDFLAGS],["-L$cci_dir/lib $LDFLAGS_save"]))
+          AC_SUBST([LDFLAGS],(["-L$cci_dir/lib -Wl,-rpath,$cci_dir/lib $LDFLAGS_save"])))
 
     AC_CHECK_LIB([cci], [cci_init], , AC_MSG_ERROR([Unable to locate CCI installation]))
 ])
