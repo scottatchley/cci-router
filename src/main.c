@@ -1110,6 +1110,10 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	type = hdr->generic.type;
 	hdr->net = htonl(hdr->net);
 
+	if (verbose)
+		debug(RDB_E2E, "%s: got %s from %s", __func__, cci_e2e_msg_type_str(type),
+			connection == rconn->src ? rconn->client_uri : rconn->server_uri);
+
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
 		adjust_e2e_mss(rconn, hdr);
@@ -1161,7 +1165,8 @@ handle_event(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	int ret = 0, up = 0;
 	uint32_t i = 0;
 
-	debug(RDB_EP, "%s: EP %p: got %s", __func__, (void*)ep,
+	if (verbose)
+		debug(RDB_EP, "%s: EP %p: got %s", __func__, (void*)ep,
 			cci_event_type_str(event->type));
 
 	switch (event->type) {
