@@ -67,11 +67,14 @@ typedef struct ccir_peer {
 	cci_connection_t *c;	/* CCI connection */
 	char *uri;		/* Peer's CCI URI */
 	ccir_router_t *router;	/* Peer's router struct */
+	cci_rma_handle_t *h;	/* Peer's RMA handle */
 	time_t next_attempt;	/* Absolute seconds for next connect attempt */
 	ccir_peer_state_t state; /* Peer's state */
 	uint32_t as;		/* Peer's Autonomous System id */
 	uint32_t subnet;	/* Peer's subnet id */
 	uint32_t id;		/* peer's router id to avoid looping */
+	uint32_t rma_len;	/* Peer's RMA transfer len */
+	uint32_t rma_cnt;	/* Peer's number of RMA buffers */
 	uint16_t attempts;	/* Number of connection attempts */
 	uint8_t connecting;	/* Waiting on connect event */
 	uint8_t accepting;	/* Waiting on accept/reject event */
@@ -88,6 +91,7 @@ typedef struct ccir_ep {
 	uint32_t subnet;	/* Our subnet ID */
 	uint32_t need_connect;	/* Do we need to attempt a peer connect? */
 	uint32_t failed;	/* Set to 1 if CCI_EVENT_ENDPOINT_DEVICE_FAILED */
+	cci_rma_handle_t *h;	/* RMA handle for globals->rma_buf */
 } ccir_ep_t;
 
 struct ccir_globals {
@@ -98,6 +102,9 @@ struct ccir_globals {
 	uint32_t nfds;		/* The highest OS handle + 1 for select */
 	uint32_t id;		/* our id from hashed ep->uris */
 	uint64_t instance;	/* our instance (seconds since epoch) */
+	void *rma_buf;		/* Pointer to RMA buffer */
+	uint32_t rma_len;	/* Length of a RMA transfer */
+	uint32_t rma_cnt;	/* Number of RMA buffers */
 	uint32_t shutdown;
 };
 

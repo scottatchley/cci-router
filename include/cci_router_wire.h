@@ -70,6 +70,22 @@ typedef union ccir_peer_hdr {
 		char data[1];		/* Start of sender's URI */
 	} connect;
 
+	/* Generic RMA handle info (without data ptr) */
+	/* Use this struct when determining the length of a header */
+	struct ccir_peer_hdr_rma_size {
+		uint8_t type;		/* CCIR_PEER_MSG_RMA_INFO */
+		uint8_t pad[3];
+		/* 32b */
+	} rma_size;
+
+	/* rma request */
+	struct ccir_peer_hdr_rma {
+		uint8_t type;		/* CCIR_PEER_MSG_RMA_INFO */
+		uint8_t pad[3];
+		/* 32b */
+		char data[1];		/* Start of sender's RMA info */
+	} rma;
+
 	/* Generic delete msg (without data ptr) */
 	/* Use this struct when determining the length of a header */
 	struct ccir_peer_hdr_del_size {
@@ -121,6 +137,7 @@ typedef union ccir_peer_hdr {
 
 typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_CONNECT = 0,
+	CCIR_PEER_MSG_RMA_INFO,
 	CCIR_PEER_MSG_DEL,
 	CCIR_PEER_MSG_RIR,
 	CCIR_PEER_MSG_MAX = CCIR_PEER_HDR_MASK	/* We can never exceed this */
@@ -132,6 +149,8 @@ ccir_peer_hdr_str(ccir_peer_hdr_type_t type)
 	switch (type) {
 	case CCIR_PEER_MSG_CONNECT:
 		return "CCIR_PEER_MSG_CONNECT";
+	case CCIR_PEER_MSG_RMA_INFO:
+		return "CCIR_PEER_MSG_RMA_INFO";
 	case CCIR_PEER_MSG_DEL:
 		return "CCIR_PEER_MSG_DEL";
 	case CCIR_PEER_MSG_RIR:
@@ -152,6 +171,53 @@ ccir_pack_connect(ccir_peer_hdr_t *hdr, const char *uri)
 	memcpy(hdr->connect.data, uri, hdr->connect.len);
 	hdr->net = htonl(hdr->net);
 	return;
+}
+
+/* RMA info */
+typedef struct ccir_rma_info {
+	struct {
+		uint64_t stuff[4];	/* Must match cci_rma_handle_t */
+	} handle;
+	/* 256b */
+	uint32_t rma_len;		/* Length of a RMA transfer */
+	/* 288b */
+	uint32_t rma_cnt;		/* Number of RMA buffers in handle */
+	/* 320b */
+} ccir_rma_info_t;
+
+static inline void
+ccir_pack_rma_info(ccir_peer_hdr_t *hdr, void *handle, int len,
+		uint32_t rma_len, uint32_t rma_cnt)
+{
+	ccir_rma_info_t *info = (ccir_rma_info_t *)hdr->rma.data;
+
+	hdr->rma.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RMA_INFO);
+	assert(len == sizeof(info->handle));
+	/* the cci_rma_handle_t is already in network order */
+	memcpy(&(info->handle), handle, len);
+	info->rma_len = htonl(rma_len);
+	info->rma_cnt = htonl(rma_cnt);
+	hdr->net = htonl(hdr->net);
+}
+
+static inline int
+ccir_parse_rma_info(ccir_peer_hdr_t *hdr, void **handle, int len,
+		uint32_t *rma_len, uint32_t *rma_cnt)
+{
+	void *h = NULL;
+	ccir_rma_info_t *info = (ccir_rma_info_t *)hdr->rma.data;
+
+	assert(len == sizeof(info->handle));
+
+	h = calloc(1, len);
+	if (!h)
+		return ENOMEM;
+	/* the cci_rma_handle_t stays in network order */
+	memcpy(h, &(info->handle), len);
+	*handle = h;
+	*rma_len = ntohl(info->rma_len);
+	*rma_cnt = ntohl(info->rma_cnt);
+	return 0;
 }
 
 /* RIR payload format */

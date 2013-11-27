@@ -27,12 +27,17 @@
 #include "cci-router.h"
 #include "bsd/murmur3.h"
 
+#define CCIR_RMA_LEN	(1024*1024)
+#define CCIR_RMA_CNT	(256)
+
 static void
 usage(char *procname)
 {
 	fprintf(stderr, "usage: %s [-f <config_file>] [-v] [-b]\n", procname);
 	fprintf(stderr, "where:\n");
 	fprintf(stderr, "\t-f\tUse this configuration file.\n");
+	fprintf(stderr, "\t-l\tLength of a RMA buffer (default %d)\n", CCIR_RMA_LEN);
+	fprintf(stderr, "\t-n\tNumber of RMA buffers (default %d)\n", CCIR_RMA_CNT);
 	fprintf(stderr, "\t-v\tVerbose output (-v[v[v]])\n");
 	fprintf(stderr, "\t-b\tBlocking mode instead of polling mode\n");
 	exit(EXIT_FAILURE);
@@ -637,6 +642,31 @@ send_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	return;
 }
 
+static void
+send_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
+{
+	ccir_peer_hdr_t *hdr = NULL;
+	char buf[sizeof(hdr->rma_size) + sizeof(ccir_rma_info_t)];
+	int ret = 0, len = sizeof(hdr->rma_size) + sizeof(ccir_rma_info_t);
+
+	hdr = (ccir_peer_hdr_t *)buf;
+
+	ccir_pack_rma_info(hdr, (void*)ep->h, sizeof(ep->h),
+			globals->rma_len, globals->rma_cnt);
+
+	debug(RDB_PEER, "%s: EP %p: sending RMA info to %s len %u rma_len %u rma_cnt %u",
+			__func__, (void*)ep, peer->uri, len, globals->rma_len,
+			globals->rma_cnt);
+
+	ret = cci_send(peer->c, buf, len, NULL, 0);
+	if (ret)
+		debug(RDB_PEER, "%s: send RMA info to %s "
+			"failed with %s", __func__,
+			peer->uri, cci_strerror(ep->e, ret));
+
+	return;
+}
+
 /* For each peer on each endpoint, send all endpoint RIRs */
 static void
 send_all_rir(ccir_globals_t *globals)
@@ -686,6 +716,9 @@ handle_peer_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 					__func__, peer->uri, ep->uri,
 					ccir_peer_state_str(peer->state),
 					(void*)peer->c);
+
+		send_rma_info(globals, ep, peer);
+
 		/* TODO exchange routing table */
 		for (e = globals->eps; *e != NULL; e++)
 			send_rir(globals, *e, peer);
@@ -768,6 +801,8 @@ handle_peer_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 					__func__, peer->uri, ep->uri,
 					ccir_peer_state_str(peer->state),
 					(void*)peer->c);
+
+		send_rma_info(globals, ep, peer);
 
 		/* TODO exchange routing table */
 		/* send our rir */
@@ -945,6 +980,23 @@ handle_peer_recv_rir(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 }
 
 static void
+handle_peer_recv_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+		cci_event_t *event)
+{
+	int ret = 0;
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
+
+	ret = ccir_parse_rma_info(hdr, (void**)&(peer->h), sizeof(peer->h),
+			&(peer->rma_len), &(peer->rma_cnt));
+	if (ret) {
+		debug(RDB_PEER, "%s: EP %p: unable to parse RMA info from %s",
+				__func__, (void*)ep, peer->uri);
+	}
+
+	return;
+}
+
+static void
 handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
 {
@@ -1049,6 +1101,9 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	switch (CCIR_PEER_HDR_TYPE(hdr->generic.type)) {
 		case CCIR_PEER_MSG_RIR:
 			handle_peer_recv_rir(globals, ep, peer, event);
+			break;
+		case CCIR_PEER_MSG_RMA_INFO:
+			handle_peer_recv_rma_info(globals, ep, peer, event);
 			break;
 		case CCIR_PEER_MSG_DEL:
 			handle_peer_recv_del(globals, ep, peer, event);
@@ -1505,6 +1560,15 @@ close_endpoints(ccir_globals_t *globals)
 		if (ep->e) {
 			int rc = 0;
 
+			if (ep->h) {
+				rc = cci_rma_deregister(ep->e, ep->h);
+				if (rc) {
+					debug(RDB_EP, "%s: cci_rma_deregister() "
+							"failed with %s",
+							__func__, cci_strerror(ep->e, rc));
+				}
+			}
+
 			rc = cci_destroy_endpoint(ep->e);
 			if (rc) {
 				debug(RDB_EP, "%s: cci_destroy_endpoint() "
@@ -1683,6 +1747,13 @@ open_endpoints(ccir_globals_t *globals)
 			goto out;
 		}
 
+		/* Register rma_buf */
+		ret = cci_rma_register(ep->e, globals->rma_buf,
+				(uint64_t)globals->rma_len * (uint64_t)globals->rma_cnt,
+				CCI_FLAG_READ|CCI_FLAG_WRITE, &(ep->h));
+		if (ret)
+			goto out;
+
 		MurmurHash3_x86_32(ep->uri, strlen(ep->uri), hash, (void *) &hash);
 
 		if (verbose)
@@ -1766,7 +1837,10 @@ main(int argc, char *argv[])
 
 	globals->topo->metric = CCIR_METRIC_BW; /* FIXME: make configurable */
 
-	while ((c = getopt(argc, argv, "f:vb")) != -1) {
+	globals->rma_len = CCIR_RMA_LEN;
+	globals->rma_cnt = CCIR_RMA_CNT;
+
+	while ((c = getopt(argc, argv, "f:vbl:n:")) != -1) {
 		switch (c) {
 		case 'f':
 			config_file = strdup(optarg);
@@ -1775,6 +1849,12 @@ main(int argc, char *argv[])
 						"- no memory");
 				exit(EXIT_FAILURE);
 			}
+			break;
+		case 'l':
+			globals->rma_len = strtol(optarg, NULL, 0);
+			break;
+		case 'n':
+			globals->rma_cnt = strtol(optarg, NULL, 0);
 			break;
 		case 'v':
 			verbose++;
@@ -1800,16 +1880,26 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	ret = posix_memalign(&globals->rma_buf, sysconf(_SC_PAGESIZE),
+			globals->rma_len * globals->rma_cnt);
+	if (ret) {
+		debug(RDB_ALL, "Unable to allocate RMA buffer because %s", strerror(ret));
+		goto out_w_init;
+	}
+
 	ret = open_endpoints(globals);
 	if (ret) {
 		debug(RDB_ALL, "%s", "Unable to open CCI endpoints.");
-		goto out_w_init;
+		goto out_w_buffer;
 	}
 
 	/* We have the endpoints, start discovery and routing */
 	event_loop(globals);
 
 	close_endpoints(globals);
+
+    out_w_buffer:
+	free(globals->rma_buf);
 
     out_w_init:
 	ret = cci_finalize();
