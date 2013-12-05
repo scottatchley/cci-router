@@ -654,9 +654,11 @@ send_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	ccir_pack_rma_info(hdr, (void*)ep->h, sizeof(ep->h),
 			globals->rma_len, globals->rma_cnt);
 
-	debug(RDB_PEER, "%s: EP %p: sending RMA info to %s len %u rma_len %u rma_cnt %u",
-			__func__, (void*)ep, peer->uri, len, globals->rma_len,
-			globals->rma_cnt);
+	if (verbose)
+		debug(RDB_PEER, "%s: EP %p: sending RMA info to %s len %u "
+				"rma_len %u rma_cnt %u", __func__, (void*)ep,
+				peer->uri, len, globals->rma_len,
+				globals->rma_cnt);
 
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
@@ -992,6 +994,10 @@ handle_peer_recv_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 		debug(RDB_PEER, "%s: EP %p: unable to parse RMA info from %s",
 				__func__, (void*)ep, peer->uri);
 	}
+
+	if (verbose)
+		debug(RDB_PEER, "%s: EP %p: from %s with rma_len %u rma_cnt %u",
+			__func__, (void*)ep, peer->uri, peer->rma_len, peer->rma_cnt);
 
 	return;
 }
