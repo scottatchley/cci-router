@@ -651,7 +651,7 @@ send_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 
 	hdr = (ccir_peer_hdr_t *)buf;
 
-	ccir_pack_rma_info(hdr, (void*)ep->h, sizeof(ep->h),
+	ccir_pack_rma_info(hdr, (void*)ep->h, sizeof(*(ep->h)),
 			globals->rma_len, globals->rma_cnt);
 
 	if (verbose)
@@ -988,7 +988,7 @@ handle_peer_recv_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 	int ret = 0;
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 
-	ret = ccir_parse_rma_info(hdr, (void**)&(peer->h), sizeof(peer->h),
+	ret = ccir_parse_rma_info(hdr, (void**)&(peer->h), sizeof(*(peer->h)),
 			&(peer->rma_len), &(peer->rma_cnt));
 	if (ret) {
 		debug(RDB_PEER, "%s: EP %p: unable to parse RMA info from %s",
