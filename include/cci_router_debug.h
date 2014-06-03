@@ -25,13 +25,13 @@ extern uint32_t verbose;
 #define RDB_ALL		(~0)		/* print all */
 
 #if CCIR_DEBUG
-#define debug(lvl,fmt,args...)					\
-do {								\
-	if ((lvl) & debug)					\
-		fprintf(stderr, "router: " fmt "\n", ##args);	\
+#define debug(lvl,fmt,...)						\
+do {									\
+	if ((lvl) & debug)						\
+		fprintf(stderr, "router: " fmt "\n", __VA_ARGS__);	\
 } while(0)
 #else	/* !CCIR_DEBUG */
-#define debug(lvl,fmt,args...) do { } while(0)
+#define debug(lvl,fmt,...) do { } while(0)
 #endif	/* CCIR_DEBUG */
 
 #endif /* CCI_ROUTER_DEBUG_H */
