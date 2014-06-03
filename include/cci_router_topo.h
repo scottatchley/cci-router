@@ -122,7 +122,7 @@ void delete_router_from_subnet(ccir_subnet_t *subnet, uint32_t router_id);
 void print_subnets(ccir_topo_t *topo);
 
 int add_pairs(ccir_topo_t *topo, ccir_subnet_t *subnet, ccir_router_t *router);
-inline void print_routes(ccir_topo_t *topo);
+void print_routes(ccir_topo_t *topo);
 int find_next_subnet(ccir_topo_t *topo, uint32_t src, uint32_t dst, uint32_t *next);
 
 

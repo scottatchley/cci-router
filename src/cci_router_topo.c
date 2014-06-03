@@ -720,7 +720,7 @@ print_route(ccir_route_t *route)
 	return;
 }
 
-inline void
+void
 print_routes(ccir_topo_t *topo)
 {
 	uint32_t i = 0;
