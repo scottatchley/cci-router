@@ -1101,8 +1101,8 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	debug(RDB_PEER, "%s: EP %p: recv'd %s msg %d bytes (header 0x%02x%02x%02x%02x)",
 			__func__, (void*)ep,
 			ccir_peer_hdr_str(CCIR_PEER_HDR_TYPE(hdr->generic.type)),
-			event->recv.len, hdr->generic.a[0], hdr->generic.a[1],
-			hdr->generic.a[2], hdr->generic.a[3]);
+			event->recv.len, hdr->generic.type, hdr->generic.a[0],
+			hdr->generic.a[1], hdr->generic.a[2]);
 
 	switch (CCIR_PEER_HDR_TYPE(hdr->generic.type)) {
 		case CCIR_PEER_MSG_RIR:
