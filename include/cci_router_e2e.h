@@ -10,6 +10,8 @@
 #ifndef CCI_ROUTER_E2E_H
 #define CCI_ROUTER_E2E_H
 
+#include <stdint.h>
+
 #include "cci.h"
 #include "cci/cci_e2e_wire.h"
 #include "cci_router_debug.h"
@@ -17,6 +19,9 @@
 #include "bsd/queue.h"
 
 BEGIN_C_DECLS
+
+typedef struct ccir_rma_request ccir_rma_request_t;
+typedef struct ccir_rma_buffer ccir_rma_buffer_t;
 
 typedef enum ccir_rconn_state {
 	CCIR_RCONN_CLOSED = -2, /* Closed ready for cleanup */
@@ -28,7 +33,7 @@ typedef enum ccir_rconn_state {
 
 /* Routed connection */
 typedef struct ccir_rconn {
-	TAILQ_ENTRY(ccir_ep) entry; /* For ep->rconns */
+	TAILQ_ENTRY(ccir_rconn) entry; /* For ep->rconns */
 	cci_connection_t *src;	/* Source (passive) connection */
 	cci_connection_t *dst;	/* Destination (active) connection */
 	ccir_rconn_state_t state; /* State */
@@ -39,6 +44,29 @@ typedef struct ccir_rconn {
 	int is_connecting;	/* Waiting on CONNECT event */
 	int is_accepting;	/* Waiting on ACCEPT event */
 } ccir_rconn_t;
+
+struct ccir_rma_request {
+	cci_e2e_hdr_t		e2e_hdr;	/* E2E header */
+	cci_e2e_rma_request_t	e2e_req;	/* E2E RMA request */
+	ccir_rconn_t		*rconn;		/* Owning rconn */
+#define CCIR_RMA_INITIATOR	0
+#define CCIR_RMA_TARGET		1
+	int			src_role : 1;	/* INITIATOR or TARGET? */
+	int			dst_role : 1;	/* INITIATOR or TARGET? */
+	int			idx      :30;	/* Index of RMA buffer */
+	TAILQ_ENTRY(tcp_rma_request) entry;
+};
+
+struct ccir_rma_buffer {
+	void		*base;		/* Pointer to buffer */
+	uint64_t	*ids;		/* Bitmask of available fragments */
+	void		**contexts;	/* Cache of the pending RMA requests */
+	pthread_mutex_t	lock;		/* Lock */
+	TAILQ_HEAD(rmas, ccir_rma_request) rmas; /* Queued RMAs waiting on buffer */
+	uint32_t	mtu;		/* RMA fragment size */
+	uint32_t	cnt;		/* Number of RMA fragments */
+	uint32_t	num_blocks;	/* Count of ids array */
+};
 
 END_C_DECLS
 #endif /* CCI_ROUTER_E2E_H */

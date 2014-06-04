@@ -23,6 +23,7 @@
 #include <sys/select.h>
 #include <assert.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 #include "cci-router.h"
 #include "bsd/murmur3.h"
@@ -652,13 +653,13 @@ send_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 	hdr = (ccir_peer_hdr_t *)buf;
 
 	ccir_pack_rma_info(hdr, (void*)ep->h, sizeof(*(ep->h)),
-			globals->rma_len, globals->rma_cnt);
+			globals->rma_buf->mtu, globals->rma_buf->cnt);
 
 	if (verbose)
 		debug(RDB_PEER, "%s: EP %p: sending RMA info to %s len %u "
 				"rma_len %u rma_cnt %u", __func__, (void*)ep,
-				peer->uri, len, globals->rma_len,
-				globals->rma_cnt);
+				peer->uri, len, globals->rma_buf->mtu,
+				globals->rma_buf->cnt);
 
 	ret = cci_send(peer->c, buf, len, NULL, 0);
 	if (ret)
@@ -1142,6 +1143,75 @@ handle_e2e_recv_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event, 
 	return;
 }
 
+static int
+rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
+{
+	int ret = 0;
+	ccir_rconn_t *rconn = rma->rconn;
+	cci_connection_t *c = NULL;
+
+	if (rma->src_role == CCIR_RMA_INITIATOR)
+		c = rconn->src;
+	else
+		c = rconn->dst;
+
+	ret = cci_rma(c, NULL, 0,
+			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
+			&rma->e2e_req.request.initiator, rma->e2e_req.request.initiator_offset,
+			rma->e2e_req.request.len, rma, 0);
+
+	return ret;
+}
+
+#if 0
+static void
+rma_read_from_target(void)
+{
+	return;
+}
+#endif
+
+static int
+rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
+{
+	int ret = 0;
+
+	return ret;
+}
+
+static void
+handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0;
+	cci_connection_t *c = NULL, *connection = event->recv.connection;
+	ccir_rconn_t *rconn = connection->context;
+	ccir_rma_request_t *rma = NULL;
+
+	if (connection == rconn->src)
+		c = rconn->dst;
+	else
+		c = rconn->src;
+
+	/* Allocate request and store */
+
+	/* Try to reserve a RMA buffer */
+
+	if (!ret) {
+		/* If successful, issue RMA Read */
+		if ((rma->src_role == CCIR_RMA_INITIATOR && !rconn->src_is_router) ||
+			(rma->dst_role == CCIR_RMA_INITIATOR && !rconn->dst_is_router)) {
+			ret = rma_read_from_initiator(globals, ep, rma);
+		} else {
+			ret = rma_read_from_router(globals, ep, rma);
+		}
+	} else {
+		/* else queue for later */
+		/* TODO lock rma queue, queue request, unlock */
+	}
+
+	return;
+}
+
 static void
 adjust_e2e_mss(ccir_rconn_t *rconn, cci_e2e_hdr_t *hdr)
 {
@@ -1191,6 +1261,9 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	case CCI_E2E_MSG_BYE:
 		/* forward it, block, then shutdown */
 		handle_e2e_recv_msg(globals, ep, event, CCI_FLAG_BLOCKING);
+		break;
+	case CCI_E2E_MSG_RMA_WRITE_REQ:
+		handle_e2e_recv_rma_write_request(globals, ep, event);
 		break;
 	default:
 		debug(RDB_E2E, "%s: unhandled %s msg", __func__,
@@ -1754,8 +1827,8 @@ open_endpoints(ccir_globals_t *globals)
 		}
 
 		/* Register rma_buf */
-		ret = cci_rma_register(ep->e, globals->rma_buf,
-				(uint64_t)globals->rma_len * (uint64_t)globals->rma_cnt,
+		ret = cci_rma_register(ep->e, globals->rma_buf->base,
+				(uint64_t)globals->rma_buf->mtu * (uint64_t)globals->rma_buf->cnt,
 				CCI_FLAG_READ|CCI_FLAG_WRITE, &(ep->h));
 		if (ret)
 			goto out;
@@ -1820,6 +1893,7 @@ main(int argc, char *argv[])
 	uint32_t caps = 0;
 	ccir_globals_t *globals = NULL;
 	ccir_topo_t *topo = NULL;
+	ccir_rma_buffer_t *rma_buf = NULL;
 	struct timeval t;
 
 	globals = calloc(1, sizeof(*globals));
@@ -1843,8 +1917,19 @@ main(int argc, char *argv[])
 
 	globals->topo->metric = CCIR_METRIC_BW; /* FIXME: make configurable */
 
-	globals->rma_len = CCIR_RMA_LEN;
-	globals->rma_cnt = CCIR_RMA_CNT;
+	rma_buf = calloc(1, sizeof(*rma_buf));
+	if (!rma_buf) {
+		free(topo);
+		free(globals);
+		ret = ENOMEM;
+		goto out;
+	}
+	globals->rma_buf = rma_buf;
+
+	pthread_mutex_init(&rma_buf->lock, NULL);
+	TAILQ_INIT(&rma_buf->rmas);
+	rma_buf->mtu = CCIR_RMA_LEN;
+	rma_buf->cnt = CCIR_RMA_CNT;
 
 	while ((c = getopt(argc, argv, "f:vbl:n:")) != -1) {
 		switch (c) {
@@ -1857,10 +1942,10 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'l':
-			globals->rma_len = strtol(optarg, NULL, 0);
+			rma_buf->mtu = strtol(optarg, NULL, 0);
 			break;
 		case 'n':
-			globals->rma_cnt = strtol(optarg, NULL, 0);
+			rma_buf->cnt = strtol(optarg, NULL, 0);
 			break;
 		case 'v':
 			verbose++;
@@ -1886,8 +1971,8 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	ret = posix_memalign(&globals->rma_buf, sysconf(_SC_PAGESIZE),
-			globals->rma_len * globals->rma_cnt);
+	ret = posix_memalign(&rma_buf->base, sysconf(_SC_PAGESIZE),
+			rma_buf->mtu * rma_buf->cnt);
 	if (ret) {
 		debug(RDB_ALL, "Unable to allocate RMA buffer because %s", strerror(ret));
 		goto out_w_init;
