@@ -53,19 +53,20 @@ struct ccir_rma_request {
 #define CCIR_RMA_TARGET		1
 	int			src_role : 1;	/* INITIATOR or TARGET? */
 	int			dst_role : 1;	/* INITIATOR or TARGET? */
-	int			idx      :30;	/* Index of RMA buffer */
-	TAILQ_ENTRY(tcp_rma_request) entry;
+	int			idx      :24;	/* Index of RMA buffer */
+	int			pad	:  6;
+	TAILQ_ENTRY(ccir_rma_request) entry;
 };
 
 struct ccir_rma_buffer {
 	void		*base;		/* Pointer to buffer */
 	uint64_t	*ids;		/* Bitmask of available fragments */
-	void		**contexts;	/* Cache of the pending RMA requests */
+	void		**rmas;		/* Cache of the pending RMA requests */
 	pthread_mutex_t	lock;		/* Lock */
-	TAILQ_HEAD(rmas, ccir_rma_request) rmas; /* Queued RMAs waiting on buffer */
+	TAILQ_HEAD(rqs, ccir_rma_request) reqs; /* Queued RMAs waiting on buffer */
 	uint32_t	mtu;		/* RMA fragment size */
 	uint32_t	cnt;		/* Number of RMA fragments */
-	uint32_t	num_blocks;	/* Count of ids array */
+	int		num_blocks;	/* Count of ids array */
 };
 
 END_C_DECLS

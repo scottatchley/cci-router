@@ -1088,6 +1088,27 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 }
 
 static void
+handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
+		cci_event_t *event)
+{
+	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
+	int idx = hdr->done.idx;
+	ccir_rma_buffer_t *rma_buf = globals->rma_buf;
+	int bits = sizeof(*rma_buf->ids) * 8, i = idx / bits, shift = idx % bits;
+
+	pthread_mutex_lock(&rma_buf->lock);
+	rma_buf->ids[i] |= (uint64_t) (1 << shift);
+	rma_buf->rmas[idx] = NULL;
+	pthread_mutex_unlock(&rma_buf->lock);
+
+	if (verbose)
+		debug(RDB_PEER, "%s: EP %p: from %s with index %u",
+			__func__, (void*)ep, peer->uri, hdr->done.idx);
+
+	return;
+}
+
+static void
 handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	cci_connection_t *connection = event->recv.connection;
@@ -1114,6 +1135,9 @@ handle_peer_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 			break;
 		case CCIR_PEER_MSG_DEL:
 			handle_peer_recv_del(globals, ep, peer, event);
+			break;
+		case CCIR_PEER_MSG_RMA_DONE:
+			handle_peer_recv_rma_done(globals, ep, peer, event);
 			break;
 		default:
 			debug(RDB_PEER, "%s: EP %p: unknown message type %d from "
@@ -1143,6 +1167,7 @@ handle_e2e_recv_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event, 
 	return;
 }
 
+/* First stage of a RMA Write is to RMA Read the data to the first router */
 static int
 rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 {
@@ -1158,7 +1183,7 @@ rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request
 	ret = cci_rma(c, NULL, 0,
 			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
 			&rma->e2e_req.request.initiator, rma->e2e_req.request.initiator_offset,
-			rma->e2e_req.request.len, rma, 0);
+			rma->e2e_req.request.len, rma, CCI_FLAG_READ);
 
 	return ret;
 }
@@ -1171,10 +1196,26 @@ rma_read_from_target(void)
 }
 #endif
 
+/* Intermediate stage of a RMA Write is reading from the the preceding router */
 static int
 rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 {
 	int ret = 0;
+	ccir_rconn_t *rconn = rma->rconn;
+	cci_connection_t *c = NULL;
+	ccir_peer_hdr_t hdr;
+
+	if (rma->src_role == CCIR_RMA_INITIATOR)
+		c = rconn->src;
+	else
+		c = rconn->dst;
+
+	ccir_pack_rma_done(&hdr, rma->idx);
+
+	ret = cci_rma(c, &hdr, sizeof(hdr),
+			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
+			&rma->e2e_req.request.initiator, rma->e2e_req.request.initiator_offset,
+			rma->e2e_req.request.len, rma, CCI_FLAG_READ);
 
 	return ret;
 }
@@ -1182,22 +1223,50 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 static void
 handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int ret = 0;
-	cci_connection_t *c = NULL, *connection = event->recv.connection;
+	int ret = 0, i = 0, idx = 0, found = 0;
+	cci_connection_t *connection = event->recv.connection;
 	ccir_rconn_t *rconn = connection->context;
+	ccir_rma_buffer_t *rma_buf = globals->rma_buf;
 	ccir_rma_request_t *rma = NULL;
+	cci_e2e_hdr_t *e2e_hdr = (cci_e2e_hdr_t *) event->recv.ptr;
+	cci_e2e_rma_request_t *e2e_req = (cci_e2e_rma_request_t *) &e2e_hdr->rma.data[0];
 
-	if (connection == rconn->src)
-		c = rconn->dst;
-	else
-		c = rconn->src;
+	/* Allocate request and store state */
+	rma = calloc(1, sizeof(*rma));
+	if (!rma) {
+		/* TODO reply with RNR or disconnect? */
+		return;
+	}
 
-	/* Allocate request and store */
+	rma->e2e_hdr.net = e2e_hdr->net;
+	rma->e2e_req.request = e2e_req->request;
+	rma->rconn = rconn;
+
+	if (connection == rconn->src) {
+		rma->src_role = CCIR_RMA_INITIATOR;
+		rma->dst_role = CCIR_RMA_TARGET;
+	} else {
+		rma->src_role = CCIR_RMA_TARGET;
+		rma->dst_role = CCIR_RMA_INITIATOR;
+	}
 
 	/* Try to reserve a RMA buffer */
+	pthread_mutex_lock(&rma_buf->lock);
+	for (i = 0; i < rma_buf->num_blocks; i++) {
+		idx = ffsl(rma_buf->ids[i]);
+		if (idx == 0)
+			continue;
 
-	if (!ret) {
+		idx--;
+		rma_buf->ids[i] &= ~((uint64_t)idx);
+		rma_buf->rmas[idx] = rma;
+		found = 1;
+	}
+
+	if (found) {
 		/* If successful, issue RMA Read */
+		pthread_mutex_unlock(&rma_buf->lock);
+
 		if ((rma->src_role == CCIR_RMA_INITIATOR && !rconn->src_is_router) ||
 			(rma->dst_role == CCIR_RMA_INITIATOR && !rconn->dst_is_router)) {
 			ret = rma_read_from_initiator(globals, ep, rma);
@@ -1206,7 +1275,8 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 		}
 	} else {
 		/* else queue for later */
-		/* TODO lock rma queue, queue request, unlock */
+		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
+		pthread_mutex_unlock(&rma_buf->lock);
 	}
 
 	return;
@@ -1828,7 +1898,8 @@ open_endpoints(ccir_globals_t *globals)
 
 		/* Register rma_buf */
 		ret = cci_rma_register(ep->e, globals->rma_buf->base,
-				(uint64_t)globals->rma_buf->mtu * (uint64_t)globals->rma_buf->cnt,
+				(uint64_t)globals->rma_buf->mtu *
+				(uint64_t)globals->rma_buf->cnt,
 				CCI_FLAG_READ|CCI_FLAG_WRITE, &(ep->h));
 		if (ret)
 			goto out;
@@ -1888,7 +1959,7 @@ open_endpoints(ccir_globals_t *globals)
 int
 main(int argc, char *argv[])
 {
-	int ret = 0, c;
+	int ret = 0, c = 0, i = 0;
 	char *config_file = NULL;
 	uint32_t caps = 0;
 	ccir_globals_t *globals = NULL;
@@ -1909,7 +1980,6 @@ main(int argc, char *argv[])
 
 	topo = calloc(1, sizeof(*topo));
 	if (!topo) {
-		free(globals);
 		ret = ENOMEM;
 		goto out;
 	}
@@ -1919,15 +1989,13 @@ main(int argc, char *argv[])
 
 	rma_buf = calloc(1, sizeof(*rma_buf));
 	if (!rma_buf) {
-		free(topo);
-		free(globals);
 		ret = ENOMEM;
 		goto out;
 	}
 	globals->rma_buf = rma_buf;
 
 	pthread_mutex_init(&rma_buf->lock, NULL);
-	TAILQ_INIT(&rma_buf->rmas);
+	TAILQ_INIT(&rma_buf->reqs);
 	rma_buf->mtu = CCIR_RMA_LEN;
 	rma_buf->cnt = CCIR_RMA_CNT;
 
@@ -1965,32 +2033,63 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	ret = posix_memalign(&rma_buf->base, sysconf(_SC_PAGESIZE),
+			rma_buf->mtu * rma_buf->cnt);
+	if (ret) {
+		debug(RDB_ALL, "Unable to allocate RMA buffer because %s", strerror(ret));
+		goto out;
+	}
+
+	rma_buf->num_blocks = rma_buf->cnt / (sizeof(*rma_buf->ids) * 8);
+	if ((rma_buf->num_blocks * (sizeof(*rma_buf->ids) * 8)) != rma_buf->cnt)
+		rma_buf->num_blocks++;
+
+	rma_buf->ids = calloc(rma_buf->num_blocks, sizeof(*rma_buf->ids));
+	if (!rma_buf->ids) {
+		ret = ENOMEM;
+		goto out;
+	}
+
+	/* Set bits for available fragments - use ffsll() to  find available */
+	for (i = 0; i < rma_buf->num_blocks; i++) {
+		memset(&rma_buf->ids[i], ~0ULL, sizeof(rma_buf->ids[i]));
+		if ((i == rma_buf->num_blocks - 1) && (rma_buf->cnt !=
+			(rma_buf->num_blocks * sizeof(rma_buf->ids[i]) * 8))) {
+
+			/* The count is not a multiple of the block size,
+			 * shift off the bits to unset them.
+			 */
+
+			int shift = rma_buf->num_blocks * sizeof(*rma_buf->ids) * 8;
+
+			shift -= rma_buf->cnt;
+			rma_buf->ids[i] <<= shift; /* shift bits off the high end */
+			rma_buf->ids[i] >>= shift; /* shift back */
+		}
+	}
+
+	rma_buf->rmas = calloc(rma_buf->cnt, sizeof(*rma_buf->rmas));
+	if (!rma_buf->rmas) {
+		ret = ENOMEM;
+		goto out;
+	}
+
 	ret = cci_init(CCI_ABI_VERSION, 0, &caps);
 	if (ret != CCI_SUCCESS) {
 		debug(RDB_ALL, "%s", "Unable to init CCI");
 		exit(EXIT_FAILURE);
 	}
 
-	ret = posix_memalign(&rma_buf->base, sysconf(_SC_PAGESIZE),
-			rma_buf->mtu * rma_buf->cnt);
-	if (ret) {
-		debug(RDB_ALL, "Unable to allocate RMA buffer because %s", strerror(ret));
-		goto out_w_init;
-	}
-
 	ret = open_endpoints(globals);
 	if (ret) {
 		debug(RDB_ALL, "%s", "Unable to open CCI endpoints.");
-		goto out_w_buffer;
+		goto out_w_init;
 	}
 
 	/* We have the endpoints, start discovery and routing */
 	event_loop(globals);
 
 	close_endpoints(globals);
-
-    out_w_buffer:
-	free(globals->rma_buf);
 
     out_w_init:
 	ret = cci_finalize();
@@ -2002,9 +2101,16 @@ main(int argc, char *argv[])
 	if (verbose)
 		debug(RDB_ALL, "%s is done", argv[0]);
 
-	if (globals->topo) {
-		ccir_topo_t *topo = globals->topo;
+    out:
+	if (rma_buf) {
+		free(rma_buf->rmas);
+		free(rma_buf->ids);
+		free(rma_buf->base);
+		pthread_mutex_destroy(&rma_buf->lock);
+		free(rma_buf);
+	}
 
+	if (topo) {
 		if (topo->num_pairs) {
 			uint32_t i = 0;
 
@@ -2043,6 +2149,6 @@ main(int argc, char *argv[])
 		free(topo);
 	}
 	free(globals);
-    out:
+
 	return ret;
 }

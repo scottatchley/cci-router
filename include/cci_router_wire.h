@@ -124,6 +124,13 @@ typedef union ccir_peer_hdr {
 		char data[1];		/* RIR data payload */
 	} rir;
 
+	/* Release the RMA buffer */
+	struct ccir_peer_hdr_rma_done {
+		uint32_t type	:  8;	/* CCIR_PEER_MSG_RMA_DONE */
+		uint32_t idx	: 24;	/* Index of RMA buffer */
+		/* 32b */
+	} done;
+
 	/* For easy byte swapping to/from network order */
 	uint32_t net;
 } ccir_peer_hdr_t;
@@ -140,6 +147,7 @@ typedef enum ccir_peer_hdr_type {
 	CCIR_PEER_MSG_RMA_INFO,
 	CCIR_PEER_MSG_DEL,
 	CCIR_PEER_MSG_RIR,
+	CCIR_PEER_MSG_RMA_DONE,		/* The receiver can release the RMA buffer */
 	CCIR_PEER_MSG_MAX = CCIR_PEER_HDR_MASK	/* We can never exceed this */
 } ccir_peer_hdr_type_t;
 
@@ -155,6 +163,8 @@ ccir_peer_hdr_str(ccir_peer_hdr_type_t type)
 		return "CCIR_PEER_MSG_DEL";
 	case CCIR_PEER_MSG_RIR:
 		return "CCIR_PEER_MSG_RIR";
+	case CCIR_PEER_MSG_RMA_DONE:
+		return "CCIR_PEER_MSG_RMA_DONE";
 	default:
 		return "Unknown peer msg type";
 	}
@@ -263,4 +273,13 @@ ccir_pack_del(ccir_peer_hdr_t *hdr, uint8_t bye, uint8_t count)
 	hdr->del.count = count;
 	hdr->net = htonl(hdr->net);
 	return;
+}
+
+static inline void
+ccir_pack_rma_done(ccir_peer_hdr_t *hdr, uint32_t index)
+{
+	hdr->done.type = CCIR_PEER_SET_HDR_TYPE(CCIR_PEER_MSG_RMA_DONE);
+	assert((index >> 24) == 0);
+	hdr->done.idx = index;
+	hdr->net = htonl(hdr->net);
 }

@@ -103,10 +103,6 @@ struct ccir_globals {
 	uint32_t id;		/* our id from hashed ep->uris */
 	uint64_t instance;	/* our instance (seconds since epoch) */
 	ccir_rma_buffer_t *rma_buf; /* RMA buffer */
-#if 0
-	uint32_t rma_len;	/* Length of a RMA transfer */
-	uint32_t rma_cnt;	/* Number of RMA buffers */
-#endif
 	uint32_t shutdown;
 };
 
