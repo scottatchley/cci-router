@@ -1094,12 +1094,15 @@ handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 	int idx = hdr->done.idx;
 	ccir_rma_buffer_t *rma_buf = globals->rma_buf;
+	ccir_rma_request_t *rma = rma_buf->rmas[idx];
 	int bits = sizeof(*rma_buf->ids) * 8, i = idx / bits, shift = idx % bits;
 
 	pthread_mutex_lock(&rma_buf->lock);
 	rma_buf->ids[i] |= (uint64_t) (1 << shift);
 	rma_buf->rmas[idx] = NULL;
 	pthread_mutex_unlock(&rma_buf->lock);
+
+	free(rma);
 
 	if (verbose)
 		debug(RDB_PEER, "%s: EP %p: from %s with index %u",
@@ -1190,8 +1193,22 @@ rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request
 
 #if 0
 static void
-rma_read_from_target(void)
+rma_read_from_target(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 {
+	int ret = 0;
+	ccir_rconn_t *rconn = rma->rconn;
+	cci_connection_t *c = NULL;
+
+	if (rma->src_role == CCIR_RMA_TARGET)
+		c = rconn->src;
+	else
+		c = rconn->dst;
+
+	ret = cci_rma(c, NULL, 0,
+			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
+			&rma->e2e_req.request.target, rma->e2e_req.request.target_offset,
+			rma->e2e_req.request.len, rma, CCI_FLAG_READ);
+
 	return;
 }
 #endif
@@ -1259,6 +1276,7 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 
 		idx--;
 		rma_buf->ids[i] &= ~((uint64_t)idx);
+		idx += i * 64;
 		rma_buf->rmas[idx] = rma;
 		found = 1;
 	}
