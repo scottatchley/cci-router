@@ -28,7 +28,7 @@ extern uint32_t verbose;
 #define debug(lvl,fmt,...)						\
 do {									\
 	if ((lvl) & debug)						\
-		fprintf(stderr, "router: " fmt "\n", __VA_ARGS__);	\
+		fprintf(stderr, "router:" fmt "\n", __VA_ARGS__);	\
 } while(0)
 #else	/* !CCIR_DEBUG */
 #define debug(lvl,fmt,...) do { } while(0)

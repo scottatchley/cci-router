@@ -49,13 +49,14 @@ struct ccir_rma_request {
 	cci_e2e_hdr_t		e2e_hdr;	/* E2E header */
 	cci_e2e_rma_request_t	e2e_req;	/* E2E RMA request */
 	ccir_rconn_t		*rconn;		/* Owning rconn */
+	TAILQ_ENTRY(ccir_rma_request) entry;
 #define CCIR_RMA_INITIATOR	0
 #define CCIR_RMA_TARGET		1
 	int			src_role : 1;	/* INITIATOR or TARGET? */
 	int			dst_role : 1;	/* INITIATOR or TARGET? */
+	int			final    : 1;	/* Set for final RMA op */
 	int			idx      :24;	/* Index of RMA buffer */
-	int			pad	:  6;
-	TAILQ_ENTRY(ccir_rma_request) entry;
+	int			pad      : 5;
 };
 
 struct ccir_rma_buffer {

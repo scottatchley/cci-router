@@ -25,14 +25,21 @@ BEGIN_C_DECLS
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
 #define CCIR_BLOCKING_TIMEOUT	(1)	/* Seconds */
 
-#define CCIR_SET_PEER_CTX(ctx)	\
-	((void *)((uintptr_t)(ctx) | (uintptr_t)0x1))
+#define CCIR_CTX_PEER		((uintptr_t)1 << 0)
+#define CCIR_CTX_RMA		((uintptr_t)1 << 1)
+#define CCIR_CTX_MAX		(((uintptr_t)1 << 2) - 1)
+
+#define CCIR_SET_CTX(ctx,type)	\
+	((void *)((uintptr_t)(ctx) | (type)))
 
 #define CCIR_IS_PEER_CTX(ctx)	\
-	(((uintptr_t)(ctx) & (uintptr_t)0x1))
+	(((uintptr_t)(ctx) & CCIR_CTX_PEER))
+
+#define CCIR_IS_RMA_CTX(ctx)	\
+	(((uintptr_t)(ctx) & CCIR_CTX_RMA))
 
 #define CCIR_CTX(ctx)	\
-	((void*)((uintptr_t)(ctx) & ~((uintptr_t)0x1)))
+	((void*)((uintptr_t)(ctx) & ~(CCIR_CTX_MAX)))
 
 typedef enum ccir_peer_state {
 	CCIR_PEER_CLOSED = -2,	/* Connection invalid */
