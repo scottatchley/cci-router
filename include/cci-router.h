@@ -25,12 +25,23 @@ BEGIN_C_DECLS
 #define CCIR_CONNECT_TIMEOUT	(360)	/* Seconds */
 #define CCIR_BLOCKING_TIMEOUT	(1)	/* Seconds */
 
+/* We are going to pack extra bits at the bottom of the context pointer. Most
+ * allocators guarantee 8-byte alignment on 32-bit systems and 16-byte
+ * alignment on 64-bit systems. We should be safe using the lower 3 bits and
+ * possible the lower 4 bits if needed.
+ *
+ * The set bit indicates what the context is.
+ */
 #define CCIR_CTX_PEER		((uintptr_t)1 << 0)
-#define CCIR_CTX_RMA		((uintptr_t)1 << 1)
-#define CCIR_CTX_MAX		(((uintptr_t)1 << 2) - 1)
+#define CCIR_CTX_RCONN		((uintptr_t)1 << 1)
+#define CCIR_CTX_RMA		((uintptr_t)1 << 2)
+#define CCIR_CTX_MASK		(((uintptr_t)1 << 3) - 1)
 
 #define CCIR_SET_CTX(ctx,type)	\
 	((void *)((uintptr_t)(ctx) | (type)))
+
+#define CCIR_GET_CTX(ctx,type)	\
+	*((int**)type) = (ctx) & CCIR_CTX_MASK
 
 #define CCIR_IS_PEER_CTX(ctx)	\
 	(((uintptr_t)(ctx) & CCIR_CTX_PEER))
@@ -39,7 +50,7 @@ BEGIN_C_DECLS
 	(((uintptr_t)(ctx) & CCIR_CTX_RMA))
 
 #define CCIR_CTX(ctx)	\
-	((void*)((uintptr_t)(ctx) & ~(CCIR_CTX_MAX)))
+	((void*)((uintptr_t)(ctx) & ~(CCIR_CTX_MASK)))
 
 typedef enum ccir_peer_state {
 	CCIR_PEER_CLOSED = -2,	/* Connection invalid */

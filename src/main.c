@@ -1173,8 +1173,10 @@ handle_e2e_recv_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event, 
 	else
 		c = rconn->src;
 
-	if (!flags)
+	if (!flags) {
 		ctx = (void*)rconn;
+		ctx = CCIR_SET_CTX(ctx, CCIR_CTX_RCONN);
+	}
 
 	ret = cci_send(c, event->recv.ptr, event->recv.len, ctx, flags);
 	if (ret || flags == CCI_FLAG_BLOCKING)
@@ -1478,9 +1480,48 @@ handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 }
 
 static void
+handle_e2e_send_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	if (event->send.status == CCI_SUCCESS) {
+	} else {
+		/* TODO send E2E_NACK back to initiator
+		 * free RMA op
+		 */
+	}
+	return;
+}
+
+static void
+handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	if (event->send.status == CCI_SUCCESS) {
+	} else {
+		/* TODO send E2E_NACK back to initiator
+		 * free RMA op
+		 */
+	}
+	return;
+}
+
+static void
 handle_send(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	void *ctx = event->send.context;
+	int type = (uintptr_t)event->send.context & CCIR_CTX_MASK;
+
+	switch (type) {
+	case CCIR_CTX_RCONN:
+		handle_e2e_send_msg(globals, ep, event);
+		break;
+	case CCIR_CTX_RMA:
+		handle_e2e_send_rma(globals, ep, event);
+		break;
+	default:
+		debug(RDB_E2E, "%s: EP %p: unknown send type %d", __func__,
+			(void*)ep, type);
+		abort();
+		break;
+	}
+
 	return;
 }
 
