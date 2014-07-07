@@ -40,7 +40,7 @@ BEGIN_C_DECLS
 #define CCIR_SET_CTX(ctx,type)	\
 	((void *)((uintptr_t)(ctx) | (type)))
 
-#define CCIR_GET_CTX(ctx,type)	\
+#define CCIR_GET_CTX_TYPE(ctx,type)	\
 	*((int**)type) = (ctx) & CCIR_CTX_MASK
 
 #define CCIR_IS_PEER_CTX(ctx)	\

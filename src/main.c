@@ -136,8 +136,7 @@ disconnect_peers(ccir_globals_t *globals)
 			cci_connection_t *c = peer->c;
 
 			if (c) {
-				ret = cci_send(c, buf, len,
-						CCIR_SET_CTX(peer, CCIR_CTX_PEER), 0);
+				ret = cci_send(c, buf, len, NULL, CCI_FLAG_BLOCKING);
 				if (ret) {
 					debug(RDB_PEER, "%s: sending del to %s failed with %s",
 						__func__, peer->uri, cci_strerror(ep->e, ret));
@@ -1482,11 +1481,23 @@ handle_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static void
 handle_e2e_send_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	if (event->send.status == CCI_SUCCESS) {
-	} else {
-		/* TODO send E2E_NACK back to initiator
-		 * free RMA op
-		 */
+	ccir_rconn_t *rconn = CCIR_CTX(event->send.context);
+
+	if (event->send.status != CCI_SUCCESS) {
+		char *uri = NULL;
+
+		if (rconn) {
+			if (event->send.connection == rconn->src)
+				uri = rconn->client_uri;
+			else
+				uri = rconn->server_uri;
+		}
+
+		debug(RDB_E2E, "%s: EP %p: MSG to %s failed with %s", __func__,
+			(void*)ep, uri, cci_strerror(ep->e, event->send.status));
+
+		if (rconn)
+			shutdown_rconn(rconn);
 	}
 	return;
 }
@@ -1494,11 +1505,43 @@ handle_e2e_send_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static void
 handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
+	ccir_rma_request_t *rma = CCIR_CTX(event->send.context);
+
 	if (event->send.status == CCI_SUCCESS) {
+		/* If RMA Write, then...
+		 *   if !final, then...
+		 *     if next is router, then...
+		 *       forward write request
+		 *     else next is target, then...
+		 *       write to target's buffer
+		 *   else is final, then...
+		 *       send RMA_ACK with status
+		 * else if RMA Read, then...
+		 *   if !final, then...
+		 *      forward read reply
+		 *   else is final, then...
+		 *     write to initiator's buffer
+		 */
 	} else {
+		char *uri = NULL;
+
 		/* TODO send E2E_NACK back to initiator
 		 * free RMA op
 		 */
+
+		if (rma->rconn) {
+			if (event->send.connection == rma->rconn->src)
+				uri = rma->rconn->client_uri;
+			else
+				uri = rma->rconn->server_uri;
+		}
+
+		debug(RDB_E2E, "%s: EP %p: RMA from %s failed with %s", __func__,
+			(void*)ep, uri, cci_strerror(ep->e, event->send.status));
+
+		shutdown_rconn(rma->rconn);
+
+		free(rma);
 	}
 	return;
 }
