@@ -1233,20 +1233,30 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 {
 	int ret = 0;
 	ccir_rconn_t *rconn = rma->rconn;
+	ccir_peer_t *peer = NULL;
 	cci_connection_t *c = NULL;
 	ccir_peer_hdr_t hdr;
+	uint32_t remote_index = 0;
+	uint64_t remote_offset = 0;
+	cci_e2e_rma_request_t e2e_req = rma->e2e_req;
 
 	if (rma->src_role == CCIR_RMA_INITIATOR)
 		c = rconn->src;
 	else
 		c = rconn->dst;
 
-	ccir_pack_rma_done(&hdr, rma->idx);
+	peer = CCIR_CTX(c->context);
+
+	e2e_req.net[10] = cci_e2e_ntohll(e2e_req.net[10]);
+	remote_index = e2e_req.request.index;
+	remote_offset = (uint64_t) peer->rma_len * (uint64_t) remote_index;
+
+	ccir_pack_rma_done(&hdr, remote_index);
 
 	ret = cci_rma(c, &hdr, sizeof(hdr),
 			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
-			&rma->e2e_req.request.initiator, rma->e2e_req.request.initiator_offset,
-			rma->e2e_req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
+			peer->h, remote_offset,
+			e2e_req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
 			CCI_FLAG_READ);
 
 	return ret;
