@@ -1388,18 +1388,19 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 	pthread_mutex_lock(&rma_buf->lock);
 	ret = reserve_rma_buffer_locked(rma_buf, rma);
 	if (!ret) {
-		/* If successful, issue RMA Read */
+		/* Successful, issue RMA Read */
 		pthread_mutex_unlock(&rma_buf->lock);
 
 		ret = post_rma(globals, ep, rma);
 		if (ret) {
+			/* The RMA failed, release the buffer and queue for later */
 			pthread_mutex_lock(&rma_buf->lock);
 			release_rma_buffer_locked(rma_buf, rma);
 			TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
 			pthread_mutex_unlock(&rma_buf->lock);
 		}
 	} else {
-		/* else queue for later */
+		/* None available, queue for later */
 		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
 		pthread_mutex_unlock(&rma_buf->lock);
 	}
@@ -1512,47 +1513,175 @@ handle_e2e_send_msg(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	return;
 }
 
+/* The RMA Read from the initiator or previous router has completed,
+ * progress this E2E RMA Write.
+ */
+static void
+handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0, next_is_router = 0;
+	ccir_rma_request_t *rma = CCIR_CTX(event->send.context);
+	cci_e2e_rma_request_t *e2e_req = &rma->e2e_req;
+	cci_connection_t *c = NULL;
+	const char *init = NULL, *target = NULL;
+	struct iovec iov[2];
+
+	/* if next is router, then...
+	 *   send RMA_WRITE_REQ
+	 * else next is target, then...
+	 *   if !final, then...
+	 *     write to target's buffer
+	 *     set final
+	 *   else is final, then...
+	 *     send RMA_ACK with status
+	 */
+
+	if (rma->src_role == CCIR_RMA_TARGET) {
+		target = rma->rconn->client_uri;
+		init = rma->rconn->server_uri;
+
+		if (CCIR_IS_PEER_CTX(rma->rconn->src->context)) {
+			next_is_router = 1;
+			c = rma->rconn->src;
+		} else {
+			if (!rma->final)
+				c = rma->rconn->src;
+			else
+				c = rma->rconn->dst;
+		}
+	} else {
+		init = rma->rconn->client_uri;
+		target = rma->rconn->server_uri;
+
+		if (CCIR_IS_PEER_CTX(rma->rconn->dst->context)) {
+			next_is_router = 1;
+			c = rma->rconn->dst;
+		} else {
+			if (!rma->final)
+				c = rma->rconn->dst;
+			else
+				c = rma->rconn->src;
+		}
+	}
+
+	if (next_is_router) {
+		/* Send RMA_WRITE_REQ to router */
+
+		iov[0].iov_base = &rma->e2e_hdr;
+		iov[0].iov_len = sizeof(rma->e2e_hdr);
+		iov[1].iov_base = &e2e_req->request;
+		iov[1].iov_len = sizeof(e2e_req->request);
+
+		e2e_req->net[10] = cci_e2e_ntohll(e2e_req->net[10]);
+		e2e_req->request.index = rma->idx;
+		e2e_req->net[10] = cci_e2e_htonll(e2e_req->net[10]);
+		ret = cci_sendv(c, iov, 2, CCIR_SET_CTX(rma, CCIR_CTX_RMA), 0);
+		if (ret) {
+			debug(RDB_E2E, "%s: forwarding RMA Write request for rconn %p "
+				"(init/target %s/%s) failed with %s", __func__,
+				(void*)rma->rconn, init, target, cci_strerror(ep->e, ret));
+		}
+	} else {
+		if (!rma->final) {
+			/* RMA Write to E2E target's buffer */
+
+			uint64_t offset = (uint64_t)rma->idx *
+				(uint64_t) globals->rma_buf->mtu;
+
+			/* cci_rma(): */
+			ret = cci_rma(c, NULL, 0, ep->h, offset,
+					&e2e_req->request.target,
+					e2e_req->request.target_offset,
+					e2e_req->request.len,
+					CCIR_SET_CTX(rma, CCIR_CTX_RMA), CCI_FLAG_WRITE);
+			if (ret) {
+				/* TODO
+				 * debug()
+				 * free(rma)
+				 * disconnect()?
+				 */
+			} else {
+				rma->final = 1;
+			}
+		} else {
+			/* Send RMA_ACK to E2E initiator */
+
+			cci_e2e_hdr_t *hdr = &rma->e2e_hdr;
+
+			hdr->net = ntohl(hdr->net);
+			hdr->rma.type = CCI_E2E_MSG_RMA_ACK;
+			hdr->net = htonl(hdr->net);
+
+			e2e_req->net[10] = cci_e2e_ntohll(e2e_req->net[10]);
+			e2e_req->request.index = 0;
+			e2e_req->net[10] = cci_e2e_htonll(e2e_req->net[10]);
+
+			iov[0].iov_base = &rma->e2e_hdr;
+			iov[0].iov_len = sizeof(rma->e2e_hdr);
+			iov[1].iov_base = &e2e_req->request;
+			iov[1].iov_len = sizeof(e2e_req->request);
+
+			ret = cci_sendv(c, iov, 2, NULL, CCI_FLAG_SILENT);
+			if (ret) {
+				debug(RDB_E2E, "%s: sending RMA_ACK for rconn %p "
+					"(init/target %s/%s) failed with %s", __func__,
+					(void*)rma->rconn, init, target,
+					cci_strerror(ep->e, ret));
+			}
+			/* TODO cleanup */
+			free(rma);
+		}
+	}
+	return;
+}
+
 static void
 handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
 	ccir_rma_request_t *rma = CCIR_CTX(event->send.context);
+	cci_e2e_hdr_t hdr;
+	char *uri = NULL;
 
-	if (event->send.status == CCI_SUCCESS) {
-		/* If RMA Write, then...
-		 *   if !final, then...
-		 *     if next is router, then...
-		 *       forward write request
-		 *     else next is target, then...
-		 *       write to target's buffer
-		 *   else is final, then...
-		 *       send RMA_ACK with status
-		 * else if RMA Read, then...
-		 *   if !final, then...
-		 *      forward read reply
-		 *   else is final, then...
-		 *     write to initiator's buffer
-		 */
-	} else {
-		char *uri = NULL;
+	hdr.net = ntohl(rma->e2e_hdr.net);
 
-		/* TODO send E2E_NACK back to initiator
-		 * free RMA op
-		 */
+	if (rma->rconn) {
+		if (event->send.connection == rma->rconn->src)
+			uri = rma->rconn->client_uri;
+		else
+			uri = rma->rconn->server_uri;
+	}
 
-		if (rma->rconn) {
-			if (event->send.connection == rma->rconn->src)
-				uri = rma->rconn->client_uri;
-			else
-				uri = rma->rconn->server_uri;
-		}
+	if (event->send.status != CCI_SUCCESS) {
+		/* TODO free RMA op */
 
-		debug(RDB_E2E, "%s: EP %p: RMA from %s failed with %s", __func__,
-			(void*)ep, uri, cci_strerror(ep->e, event->send.status));
+		debug(RDB_E2E, "%s: EP %p: %s from %s failed with %s", __func__,
+			(void*)ep, cci_e2e_msg_type_str(hdr.rma.type),
+			uri, cci_strerror(ep->e, event->send.status));
 
 		shutdown_rconn(rma->rconn);
 
 		free(rma);
+		goto out;
 	}
+
+	switch (hdr.rma.type) {
+	case CCI_E2E_MSG_RMA_WRITE_REQ:
+		handle_e2e_send_rma_write(globals, ep, event);
+		break;
+	case CCI_E2E_MSG_RMA_READ_REQ:
+	case CCI_E2E_MSG_RMA_READ_REPLY:
+		/* if next is router, then...
+		 *   send RMA_READ_REPLY
+		 * else next is inititator, then...
+		 *   write to initiator's buffer with RMA_ACK
+		 */
+		break;
+	default:
+		debug(RDB_E2E, "%s: EP %p: Unhandled %s from %s", __func__,
+			(void*)ep, cci_e2e_msg_type_str(hdr.rma.type), uri);
+	}
+
+    out:
 	return;
 }
 
