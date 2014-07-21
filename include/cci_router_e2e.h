@@ -36,13 +36,12 @@ typedef struct ccir_rconn {
 	TAILQ_ENTRY(ccir_rconn) entry; /* For ep->rconns */
 	cci_connection_t *src;	/* Source (passive) connection */
 	cci_connection_t *dst;	/* Destination (active) connection */
-	ccir_rconn_state_t state; /* State */
-	int src_is_router;	/* Is src a router or routing client? */
-	int dst_is_router;	/* Is dst a router or routing client? */
 	char *client_uri;	/* E2E client's URI */
 	char *server_uri;	/* E2E server's URI */
-	int is_connecting;	/* Waiting on CONNECT event */
-	int is_accepting;	/* Waiting on ACCEPT event */
+	ccir_rconn_state_t state; /* State */
+	int is_connecting :  1;	/* Waiting on CONNECT event */
+	int is_accepting  :  1;	/* Waiting on ACCEPT event */
+	int pad		  : 30; /* Reserved */
 } ccir_rconn_t;
 
 struct ccir_rma_request {

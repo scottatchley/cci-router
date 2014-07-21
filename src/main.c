@@ -533,8 +533,6 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	rconn->state = CCIR_RCONN_PENDING;
 	rconn->client_uri = client;
 	rconn->server_uri = server;
-	rconn->src_is_router = src_is_router;
-	rconn->dst_is_router = dst_is_router;
 
 	/* put back in network order */
 	hdr->net = htonl(hdr->net);
@@ -1321,9 +1319,9 @@ post_rma(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 	case CCI_E2E_MSG_RMA_WRITE_REQ:
 		if (!rma->final) {
 			if ((rma->src_role == CCIR_RMA_INITIATOR &&
-				!rma->rconn->src_is_router) ||
+				(CCIR_IS_PEER_CTX(rma->rconn->src->context))) ||
 				(rma->dst_role == CCIR_RMA_INITIATOR &&
-				 !rma->rconn->dst_is_router)) {
+				 CCIR_IS_PEER_CTX(rma->rconn->dst->context))) {
 
 				ret = rma_read_from_initiator(globals, ep, rma);
 			} else {
