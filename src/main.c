@@ -1270,24 +1270,37 @@ rma_write(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 	return ret;
 }
 
-/* Caller holds rma_buf->lock */
+/* Caller holds rma_buf->lock.
+ *
+ * If the rma is new, the idx must be -1. In this case, we will look for an
+ * available slot. If the rma is reusing an existing slot, idx must be set
+ * to that index and we will simply update the rma_buf->rmas. */
 static inline int
 reserve_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
 {
 	int ret = EAGAIN, i = 0, idx = 0;
 
-	for (i = 0; i < rma_buf->num_blocks; i++) {
-		idx = ffsl(rma_buf->ids[i]);
-		if (idx == 0)
-			continue;
+	if (rma->idx == -1) {
+		for (i = 0; i < rma_buf->num_blocks; i++) {
+			idx = ffsl(rma_buf->ids[i]);
+			if (idx == 0)
+				continue;
 
-		idx--;
-		rma_buf->ids[i] &= ~((uint64_t)1 << idx);
-		idx += i * 64;
-		rma->idx = idx;
-		rma_buf->rmas[idx] = rma;
+			idx--;
+			rma_buf->ids[i] &= ~((uint64_t)1 << idx);
+			idx += i * 64;
+			rma->idx = idx;
+			ret = 0;
+			break;
+		}
+	} else {
+		idx = rma->idx;
 		ret = 0;
 	}
+
+	if (!ret)
+		rma_buf->rmas[idx] = rma;
+
 	return ret;
 }
 
