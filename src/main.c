@@ -1586,7 +1586,8 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 			uint64_t offset = (uint64_t)rma->idx *
 				(uint64_t) globals->rma_buf->mtu;
 
-			/* cci_rma(): */
+			rma->final = 1;
+
 			ret = cci_rma(c, NULL, 0, ep->h, offset,
 					&e2e_req->request.target,
 					e2e_req->request.target_offset,
@@ -1598,8 +1599,6 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 				 * free(rma)
 				 * disconnect()?
 				 */
-			} else {
-				rma->final = 1;
 			}
 		} else {
 			/* Send RMA_ACK to E2E initiator */
