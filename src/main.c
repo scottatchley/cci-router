@@ -1092,16 +1092,18 @@ handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 	int idx = hdr->done.idx;
 	ccir_rma_buffer_t *rma_buf = globals->rma_buf;
 	ccir_rma_request_t *rma = rma_buf->rmas[idx], *new = NULL;
-	int bits = sizeof(*rma_buf->ids) * 8, i = idx / bits, shift = idx % bits;
+
+	assert(rma);
+	assert(idx == rma->idx);
 
 	pthread_mutex_lock(&rma_buf->lock);
+	release_rma_buffer_locked(rma_buf, rma);
+
 	new = TAILQ_FIRST(&rma_buf->reqs);
 	if (new) {
 		TAILQ_REMOVE(&rma_buf->reqs, new, entry);
-		rma_buf->rmas[idx] = new;
-	} else {
-		rma_buf->ids[i] |= (uint64_t) (1 << shift);
-		rma_buf->rmas[idx] = NULL;
+		new->idx = idx;
+		reserve_rma_buffer_locked(rma_buf, new);
 	}
 	pthread_mutex_unlock(&rma_buf->lock);
 	free(rma);
