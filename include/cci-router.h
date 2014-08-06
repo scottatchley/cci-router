@@ -94,7 +94,7 @@ typedef struct ccir_peer {
 	uint32_t as;		/* Peer's Autonomous System id */
 	uint32_t subnet;	/* Peer's subnet id */
 	uint32_t id;		/* peer's router id to avoid looping */
-	uint32_t rma_len;	/* Peer's RMA transfer len */
+	uint32_t rma_mtu;	/* Peer's RMA transfer len */
 	uint32_t rma_cnt;	/* Peer's number of RMA buffers */
 	uint16_t attempts;	/* Number of connection attempts */
 	uint8_t connecting;	/* Waiting on connect event */

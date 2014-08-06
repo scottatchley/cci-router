@@ -28,7 +28,7 @@
 #include "cci-router.h"
 #include "bsd/murmur3.h"
 
-#define CCIR_RMA_LEN	(1024*1024)
+#define CCIR_RMA_MTU	(1024*1024)
 #define CCIR_RMA_CNT	(256)
 
 static void
@@ -37,7 +37,7 @@ usage(char *procname)
 	fprintf(stderr, "usage: %s [-f <config_file>] [-v] [-b]\n", procname);
 	fprintf(stderr, "where:\n");
 	fprintf(stderr, "\t-f\tUse this configuration file.\n");
-	fprintf(stderr, "\t-l\tLength of a RMA buffer (default %d)\n", CCIR_RMA_LEN);
+	fprintf(stderr, "\t-l\tLength of a RMA buffer (default %d)\n", CCIR_RMA_MTU);
 	fprintf(stderr, "\t-n\tNumber of RMA buffers (default %d)\n", CCIR_RMA_CNT);
 	fprintf(stderr, "\t-v\tVerbose output (-v[v[v]])\n");
 	fprintf(stderr, "\t-b\tBlocking mode instead of polling mode\n");
@@ -535,7 +535,7 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	rconn->server_uri = server;
 
 	/* put back in network order */
-	hdr->net = htonl(hdr->net);
+	hdr->net[0] = htonl(hdr->net[0]);
 	for (i = 0; i < 2; i++)
 		connect->net[i] = htonl(connect->net[i]);
 
@@ -654,7 +654,7 @@ send_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer)
 
 	if (verbose)
 		debug(RDB_PEER, "%s: EP %p: sending RMA info to %s len %u "
-				"rma_len %u rma_cnt %u", __func__, (void*)ep,
+				"rma_mtu %u rma_cnt %u", __func__, (void*)ep,
 				peer->uri, len, globals->rma_buf->mtu,
 				globals->rma_buf->cnt);
 
@@ -987,15 +987,15 @@ handle_peer_recv_rma_info(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 	ccir_peer_hdr_t *hdr = (ccir_peer_hdr_t*)event->recv.ptr; /* in host order */
 
 	ret = ccir_parse_rma_info(hdr, (void**)&(peer->h), sizeof(*(peer->h)),
-			&(peer->rma_len), &(peer->rma_cnt));
+			&(peer->rma_mtu), &(peer->rma_cnt));
 	if (ret) {
 		debug(RDB_PEER, "%s: EP %p: unable to parse RMA info from %s",
 				__func__, (void*)ep, peer->uri);
 	}
 
 	if (verbose)
-		debug(RDB_PEER, "%s: EP %p: from %s with rma_len %u rma_cnt %u",
-			__func__, (void*)ep, peer->uri, peer->rma_len, peer->rma_cnt);
+		debug(RDB_PEER, "%s: EP %p: from %s with rma_mtu %u rma_cnt %u",
+			__func__, (void*)ep, peer->uri, peer->rma_mtu, peer->rma_cnt);
 
 	return;
 }
@@ -1311,7 +1311,7 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 
 	e2e_req.net[10] = cci_e2e_ntohll(e2e_req.net[10]);
 	remote_index = e2e_req.request.index;
-	remote_offset = (uint64_t) peer->rma_len * (uint64_t) remote_index;
+	remote_offset = (uint64_t) peer->rma_mtu * (uint64_t) remote_index;
 
 	ccir_pack_rma_done(&hdr, remote_index);
 
@@ -1340,7 +1340,7 @@ post_rma(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 	int ret = 0;
 	cci_e2e_hdr_t hdr;
 
-	hdr.net = ntohl(rma->e2e_hdr.net);
+	hdr.net[0] = ntohl(rma->e2e_hdr.net[0]);
 
 	switch (hdr.rma.type) {
 	case CCI_E2E_MSG_RMA_WRITE_REQ:
@@ -1396,7 +1396,7 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 		return;
 	}
 
-	rma->e2e_hdr.net = e2e_hdr->net;
+	rma->e2e_hdr.net[0] = e2e_hdr->net[0];
 	rma->e2e_req.request = e2e_req->request;
 	rma->rconn = rconn;
 	rma->idx = -1;
@@ -1434,18 +1434,25 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 }
 
 static void
-adjust_e2e_mss(ccir_rconn_t *rconn, cci_e2e_hdr_t *hdr)
+adjust_e2e_mss_rma_mtu(ccir_globals_t *globals, ccir_rconn_t *rconn, cci_e2e_hdr_t *hdr)
 {
 	uint16_t mss = 0;
+	uint32_t mtu = 0;
 
-	hdr->net = ntohl(hdr->net);
+	hdr->net[0] = ntohl(hdr->net[0]);
+	hdr->net[1] = ntohl(hdr->net[1]);
 	mss = hdr->conn_reply.mss;
 	if (rconn->src->max_send_size < mss)
 		mss = rconn->src->max_send_size;
 	if (rconn->dst->max_send_size < mss)
 		mss = rconn->dst->max_send_size;
+	mtu = hdr->conn_reply.rma_mtu;
+	if (globals->rma_buf->mtu < mtu)
+		mtu = globals->rma_buf->mtu;
 	hdr->conn_reply.mss = mss;
-	hdr->net = htonl(hdr->net);
+	hdr->conn_reply.rma_mtu = mtu;
+	hdr->net[0] = htonl(hdr->net[0]);
+	hdr->net[1] = htonl(hdr->net[1]);
 
 	return;
 }
@@ -1458,9 +1465,9 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	cci_e2e_hdr_t *hdr = (void*) event->recv.ptr;
 	cci_e2e_msg_type_t type = 0;
 
-	hdr->net = ntohl(hdr->net);
+	hdr->net[0] = ntohl(hdr->net[0]);
 	type = hdr->generic.type;
-	hdr->net = htonl(hdr->net);
+	hdr->net[0] = htonl(hdr->net[0]);
 
 	if (verbose)
 		debug(RDB_E2E, "%s: got %s from %s", __func__, cci_e2e_msg_type_str(type),
@@ -1468,7 +1475,7 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 
 	switch (type) {
 	case CCI_E2E_MSG_CONN_REPLY:
-		adjust_e2e_mss(rconn, hdr);
+		adjust_e2e_mss_rma_mtu(globals, rconn, hdr);
 	case CCI_E2E_MSG_CONN_ACK:
 	case CCI_E2E_MSG_SEND:
 	case CCI_E2E_MSG_SEND_ACK:
@@ -1632,9 +1639,9 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 
 			cci_e2e_hdr_t *hdr = &rma->e2e_hdr;
 
-			hdr->net = ntohl(hdr->net);
+			hdr->net[0] = ntohl(hdr->net[0]);
 			hdr->rma.type = CCI_E2E_MSG_RMA_ACK;
-			hdr->net = htonl(hdr->net);
+			hdr->net[0] = htonl(hdr->net[0]);
 
 			e2e_req->net[10] = cci_e2e_ntohll(e2e_req->net[10]);
 			e2e_req->request.index = 0;
@@ -1666,7 +1673,7 @@ handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	cci_e2e_hdr_t hdr;
 	char *uri = NULL;
 
-	hdr.net = ntohl(rma->e2e_hdr.net);
+	hdr.net[0] = ntohl(rma->e2e_hdr.net[0]);
 
 	if (rma->rconn) {
 		if (event->send.connection == rma->rconn->src)
@@ -2365,7 +2372,7 @@ main(int argc, char *argv[])
 
 	pthread_mutex_init(&rma_buf->lock, NULL);
 	TAILQ_INIT(&rma_buf->reqs);
-	rma_buf->mtu = CCIR_RMA_LEN;
+	rma_buf->mtu = CCIR_RMA_MTU;
 	rma_buf->cnt = CCIR_RMA_CNT;
 
 	while ((c = getopt(argc, argv, "f:vbl:n:")) != -1) {
