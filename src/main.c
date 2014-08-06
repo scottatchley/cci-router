@@ -1134,6 +1134,9 @@ release_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
 	return;
 }
 
+static int
+post_rma(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma);
+
 static void
 handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
@@ -1159,7 +1162,16 @@ handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *p
 	free(rma);
 
 	if (new) {
-		/* TODO determine RMA type and issue it */
+		int ret = 0;
+
+		ret = post_rma(globals, ep, new);
+		if (ret) {
+			/* The RMA failed, release the buffer and queue for later */
+			pthread_mutex_lock(&rma_buf->lock);
+			release_rma_buffer_locked(rma_buf, new);
+			TAILQ_INSERT_HEAD(&rma_buf->reqs, new, entry);
+			pthread_mutex_unlock(&rma_buf->lock);
+		}
 	}
 
 	if (verbose)
