@@ -1084,6 +1084,56 @@ handle_peer_recv_del(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 	return;
 }
 
+/* Caller holds rma_buf->lock.
+ *
+ * If the rma is new, the idx must be -1. In this case, we will look for an
+ * available slot. If the rma is reusing an existing slot, idx must be set
+ * to that index and we will simply update the rma_buf->rmas. */
+static inline int
+reserve_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
+{
+	int ret = EAGAIN, i = 0, idx = 0;
+
+	if (rma->idx == -1) {
+		for (i = 0; i < rma_buf->num_blocks; i++) {
+			idx = ffsl(rma_buf->ids[i]);
+			if (idx == 0)
+				continue;
+
+			idx--;
+			rma_buf->ids[i] &= ~((uint64_t)1 << idx);
+			idx += i * 64;
+			rma->idx = idx;
+			ret = 0;
+			break;
+		}
+	} else {
+		idx = rma->idx;
+		ret = 0;
+	}
+
+	if (!ret)
+		rma_buf->rmas[idx] = rma;
+
+	return ret;
+}
+
+/* Caller holds rma_buf->lock */
+static inline void
+release_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
+{
+	int i = 0, idx = 0;
+
+	i = rma->idx / 64;
+	idx = rma->idx % 64;
+
+	rma_buf->ids[i] |= ((uint64_t) 1) << idx;
+	rma_buf->rmas[idx] = NULL;
+	rma->idx = -1;
+
+	return;
+}
+
 static void
 handle_peer_recv_rma_done(ccir_globals_t *globals, ccir_ep_t *ep, ccir_peer_t *peer,
 		cci_event_t *event)
@@ -1270,56 +1320,6 @@ rma_write(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 	debug(RDB_E2E, "%s: *** TODO ***", __func__);
 
 	return ret;
-}
-
-/* Caller holds rma_buf->lock.
- *
- * If the rma is new, the idx must be -1. In this case, we will look for an
- * available slot. If the rma is reusing an existing slot, idx must be set
- * to that index and we will simply update the rma_buf->rmas. */
-static inline int
-reserve_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
-{
-	int ret = EAGAIN, i = 0, idx = 0;
-
-	if (rma->idx == -1) {
-		for (i = 0; i < rma_buf->num_blocks; i++) {
-			idx = ffsl(rma_buf->ids[i]);
-			if (idx == 0)
-				continue;
-
-			idx--;
-			rma_buf->ids[i] &= ~((uint64_t)1 << idx);
-			idx += i * 64;
-			rma->idx = idx;
-			ret = 0;
-			break;
-		}
-	} else {
-		idx = rma->idx;
-		ret = 0;
-	}
-
-	if (!ret)
-		rma_buf->rmas[idx] = rma;
-
-	return ret;
-}
-
-/* Caller holds rma_buf->lock */
-static inline void
-release_rma_buffer_locked(ccir_rma_buffer_t *rma_buf, ccir_rma_request_t *rma)
-{
-	int i = 0, idx = 0;
-
-	i = rma->idx / 64;
-	idx = rma->idx % 64;
-
-	rma_buf->ids[i] |= ((uint64_t) 1) << idx;
-	rma_buf->rmas[idx] = NULL;
-	rma->idx = -1;
-
-	return;
 }
 
 static int
@@ -1700,7 +1700,7 @@ handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 static void
 handle_send(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
-	int type = (uintptr_t)event->send.context & CCIR_CTX_MASK;
+	int type = CCIR_CTX_TYPE(event->send.context);
 
 	switch (type) {
 	case CCIR_CTX_RCONN:

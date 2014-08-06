@@ -43,6 +43,9 @@ BEGIN_C_DECLS
 #define CCIR_GET_CTX_TYPE(ctx,type)	\
 	*((int**)type) = (ctx) & CCIR_CTX_MASK
 
+#define CCIR_CTX_TYPE(ctx)	\
+	((int)(((uintptr_t)(ctx) & CCIR_CTX_MASK)))
+
 #define CCIR_IS_PEER_CTX(ctx)	\
 	(((uintptr_t)(ctx) & CCIR_CTX_PEER))
 
