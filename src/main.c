@@ -738,7 +738,7 @@ handle_e2e_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	ccir_rconn_t *rconn = event->accept.context;
 
 	rconn->is_accepting = 0;
-	rconn->dst = event->accept.connection; /* may be NULL */
+	rconn->src = event->accept.connection; /* may be NULL */
 
 	if (event->accept.status != CCI_SUCCESS ||
 		rconn->state == CCIR_RCONN_CLOSING) {
@@ -839,7 +839,7 @@ handle_e2e_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	ccir_rconn_t *rconn = event->connect.context;
 
 	rconn->is_connecting = 0;
-	rconn->src = event->connect.connection; /* may be NULL */
+	rconn->dst = event->connect.connection; /* may be NULL */
 
 	if (event->connect.status != 0 ||
 		rconn->state == CCIR_RCONN_CLOSING) {
@@ -1346,9 +1346,9 @@ post_rma(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t *rma)
 	case CCI_E2E_MSG_RMA_WRITE_REQ:
 		if (!rma->final) {
 			if ((rma->src_role == CCIR_RMA_INITIATOR &&
-				(CCIR_IS_PEER_CTX(rma->rconn->src->context))) ||
+				(!CCIR_IS_PEER_CTX(rma->rconn->src->context))) ||
 				(rma->dst_role == CCIR_RMA_INITIATOR &&
-				 CCIR_IS_PEER_CTX(rma->rconn->dst->context))) {
+				 !CCIR_IS_PEER_CTX(rma->rconn->dst->context))) {
 
 				ret = rma_read_from_initiator(globals, ep, rma);
 			} else {
