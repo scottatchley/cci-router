@@ -1259,6 +1259,11 @@ rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request
 	int ret = 0;
 	ccir_rconn_t *rconn = rma->rconn;
 	cci_connection_t *c = NULL;
+	cci_e2e_rma_request_t req = rma->e2e_req;
+
+	req.net[8] = cci_e2e_ntohll(req.net[8]);
+	req.net[9] = cci_e2e_ntohll(req.net[9]);
+	req.net[10] = cci_e2e_ntohll(req.net[10]);
 
 	if (rma->src_role == CCIR_RMA_INITIATOR)
 		c = rconn->src;
@@ -1267,8 +1272,8 @@ rma_read_from_initiator(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request
 
 	ret = cci_rma(c, NULL, 0,
 			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
-			&rma->e2e_req.request.initiator, rma->e2e_req.request.initiator_offset,
-			rma->e2e_req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
+			&rma->e2e_req.request.initiator, req.request.initiator_offset,
+			req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
 			CCI_FLAG_READ);
 
 	return ret;
@@ -1280,6 +1285,11 @@ rma_read_from_target(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 	int ret = 0;
 	ccir_rconn_t *rconn = rma->rconn;
 	cci_connection_t *c = NULL;
+	cci_e2e_rma_request_t req = rma->e2e_req;
+
+	req.net[8] = cci_e2e_ntohll(req.net[8]);
+	req.net[9] = cci_e2e_ntohll(req.net[9]);
+	req.net[10] = cci_e2e_ntohll(req.net[10]);
 
 	if (rma->src_role == CCIR_RMA_TARGET)
 		c = rconn->src;
@@ -1288,8 +1298,8 @@ rma_read_from_target(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 
 	ret = cci_rma(c, NULL, 0,
 			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
-			&rma->e2e_req.request.target, rma->e2e_req.request.target_offset,
-			rma->e2e_req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
+			&rma->e2e_req.request.target, req.request.target_offset,
+			req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
 			CCI_FLAG_READ);
 
 	return ret;
@@ -1306,7 +1316,11 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 	ccir_peer_hdr_t hdr;
 	uint32_t remote_index = 0;
 	uint64_t remote_offset = 0;
-	cci_e2e_rma_request_t e2e_req = rma->e2e_req;
+	cci_e2e_rma_request_t req = rma->e2e_req;
+
+	req.net[8] = cci_e2e_ntohll(req.net[8]);
+	req.net[9] = cci_e2e_ntohll(req.net[9]);
+	req.net[10] = cci_e2e_ntohll(req.net[10]);
 
 	if (rma->src_role == CCIR_RMA_INITIATOR)
 		c = rconn->src;
@@ -1315,8 +1329,7 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 
 	peer = CCIR_CTX(c->context);
 
-	e2e_req.net[10] = cci_e2e_ntohll(e2e_req.net[10]);
-	remote_index = e2e_req.request.index;
+	remote_index = req.request.index;
 	remote_offset = (uint64_t) peer->rma_mtu * (uint64_t) remote_index;
 
 	ccir_pack_rma_done(&hdr, remote_index);
@@ -1324,7 +1337,7 @@ rma_read_from_router(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 	ret = cci_rma(c, &hdr, sizeof(hdr),
 			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
 			peer->h, remote_offset,
-			e2e_req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
+			req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
 			CCI_FLAG_READ);
 
 	return ret;
@@ -1623,15 +1636,28 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 		if (!rma->final) {
 			/* RMA Write to E2E target's buffer */
 
+			int i = 0;
 			uint64_t offset = (uint64_t)rma->idx *
 				(uint64_t) globals->rma_buf->mtu;
+			cci_e2e_rma_request_t req = *e2e_req;
+			ccir_ep_t *e = NULL;
+
+			for (i = 0; i < (int) globals->ep_cnt; i++) {
+				e = globals->eps[i];
+				if (e->e == c->endpoint)
+					break;
+			}
+
+			req.net[8] = cci_e2e_ntohll(req.net[8]);
+			req.net[9] = cci_e2e_ntohll(req.net[9]);
+			req.net[10] = cci_e2e_ntohll(req.net[10]);
 
 			rma->final = 1;
 
-			ret = cci_rma(c, NULL, 0, ep->h, offset,
+			ret = cci_rma(c, NULL, 0, e->h, offset,
 					&e2e_req->request.target,
-					e2e_req->request.target_offset,
-					e2e_req->request.len,
+					req.request.target_offset,
+					req.request.len,
 					CCIR_SET_CTX(rma, CCIR_CTX_RMA), CCI_FLAG_WRITE);
 			if (ret) {
 				/* TODO
