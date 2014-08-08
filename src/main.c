@@ -749,7 +749,10 @@ handle_e2e_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 				rconn->client_uri, rconn->server_uri);
 
 		shutdown_rconn(rconn);
+	} else if (!rconn->is_connecting) {
+		rconn->state = CCIR_RCONN_CONNECTED;
 	}
+
 	return;
 }
 
@@ -850,7 +853,10 @@ handle_e2e_connect(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 				rconn->client_uri, rconn->server_uri);
 
 		shutdown_rconn(rconn);
+	} else if (!rconn->is_accepting) {
+		rconn->state = CCIR_RCONN_CONNECTED;
 	}
+
 	return;
 }
 
