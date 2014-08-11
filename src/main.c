@@ -1680,7 +1680,7 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 			e2e_req->net[10] = cci_e2e_htonll(e2e_req->net[10]);
 
 			iov[0].iov_base = &rma->e2e_hdr;
-			iov[0].iov_len = sizeof(rma->e2e_hdr);
+			iov[0].iov_len = sizeof(rma->e2e_hdr.rma_size);
 			iov[1].iov_base = &e2e_req->request;
 			iov[1].iov_len = sizeof(e2e_req->request);
 
