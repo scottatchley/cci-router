@@ -1447,6 +1447,7 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 		/* None available, queue for later */
 		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
 		pthread_mutex_unlock(&rma_buf->lock);
+		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, rma);
 	}
 
 	return;
@@ -1670,6 +1671,10 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 			/* Send RMA_ACK to E2E initiator */
 
 			cci_e2e_hdr_t *hdr = &rma->e2e_hdr;
+
+			pthread_mutex_lock(&globals->rma_buf->lock);
+			release_rma_buffer_locked(globals->rma_buf, rma);
+			pthread_mutex_unlock(&globals->rma_buf->lock);
 
 			hdr->net[0] = ntohl(hdr->net[0]);
 			hdr->rma.type = CCI_E2E_MSG_RMA_ACK;
