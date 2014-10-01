@@ -33,11 +33,12 @@ typedef enum ccir_rconn_state {
 
 /* Routed connection */
 typedef struct ccir_rconn {
-	TAILQ_ENTRY(ccir_rconn) entry; /* For ep->rconns */
 	cci_connection_t *src;	/* Source (passive) connection */
 	cci_connection_t *dst;	/* Destination (active) connection */
 	char *client_uri;	/* E2E client's URI */
 	char *server_uri;	/* E2E server's URI */
+	cci_rma_handle_t *sh;	/* Source's RMA handle if peer */
+	cci_rma_handle_t *dh;	/* Destination's RMA handle if peer */
 	ccir_rconn_state_t state; /* State */
 	int is_connecting :  1;	/* Waiting on CONNECT event */
 	int is_accepting  :  1;	/* Waiting on ACCEPT event */

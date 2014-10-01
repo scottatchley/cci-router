@@ -533,6 +533,8 @@ handle_e2e_connect_request(ccir_globals_t *globals, ccir_ep_t *src_ep, cci_event
 	rconn->state = CCIR_RCONN_PENDING;
 	rconn->client_uri = client;
 	rconn->server_uri = server;
+	rconn->sh = src_ep->h;
+	rconn->dh = dst_ep->h;
 
 	/* put back in network order */
 	hdr->net[0] = htonl(hdr->net[0]);
@@ -1285,19 +1287,23 @@ rma_read_from_target(ccir_globals_t *globals, ccir_ep_t *ep, ccir_rma_request_t 
 	int ret = 0;
 	ccir_rconn_t *rconn = rma->rconn;
 	cci_connection_t *c = NULL;
+	cci_rma_handle_t *h = NULL;
 	cci_e2e_rma_request_t req = rma->e2e_req;
 
 	req.net[8] = cci_e2e_ntohll(req.net[8]);
 	req.net[9] = cci_e2e_ntohll(req.net[9]);
 	req.net[10] = cci_e2e_ntohll(req.net[10]);
 
-	if (rma->src_role == CCIR_RMA_TARGET)
+	if (rma->src_role == CCIR_RMA_TARGET) {
 		c = rconn->src;
-	else
+		h = rconn->sh;
+	} else {
 		c = rconn->dst;
+		h = rconn->dh;
+	}
 
 	ret = cci_rma(c, NULL, 0,
-			ep->h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
+			h, (uint64_t) rma->idx * (uint64_t) globals->rma_buf->mtu,
 			&rma->e2e_req.request.target, req.request.target_offset,
 			req.request.len, CCIR_SET_CTX(rma, CCIR_CTX_RMA),
 			CCI_FLAG_READ);
@@ -1454,6 +1460,90 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 }
 
 static void
+handle_e2e_recv_rma_read_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0, forward = 0;
+	cci_connection_t *connection = event->recv.connection, *c = NULL;
+	ccir_rconn_t *rconn = connection->context;
+	ccir_rma_buffer_t *rma_buf = globals->rma_buf;
+	ccir_rma_request_t *rma = NULL;
+	cci_e2e_hdr_t *e2e_hdr = (cci_e2e_hdr_t *) event->recv.ptr;
+	cci_e2e_rma_request_t *e2e_req = (cci_e2e_rma_request_t *) &e2e_hdr->rma.data[0];
+
+	/* if next is router, then...
+	 *   send RMA_READ_REQ
+	 * else next is target, then...
+	 *   reserve buffer
+	 *   read from target's buffer
+	 */
+
+	if (connection == rconn->src) {
+		if (CCIR_IS_PEER_CTX(rconn->dst->context)) {
+			c = rconn->dst;
+			forward = 1;
+		}
+	} else {
+		if (CCIR_IS_PEER_CTX(rconn->src->context)) {
+			c = rconn->src;
+			forward = 1;
+		}
+	}
+
+	if (forward) {
+		ret = cci_send(c, event->recv.ptr, event->recv.len, NULL, 0);
+		if (ret) {
+			/* send NAK or disconnect? */
+		}
+		goto out;
+	}
+
+	/* Allocate request and store state */
+	rma = calloc(1, sizeof(*rma));
+	if (!rma) {
+		/* TODO reply with RNR or disconnect? */
+		return;
+	}
+
+	rma->e2e_hdr.net[0] = e2e_hdr->net[0];
+	rma->e2e_req.request = e2e_req->request;
+	rma->rconn = rconn;
+	rma->idx = -1;
+
+	if (connection == rconn->src) {
+		rma->src_role = CCIR_RMA_INITIATOR;
+		rma->dst_role = CCIR_RMA_TARGET;
+	} else {
+		rma->src_role = CCIR_RMA_TARGET;
+		rma->dst_role = CCIR_RMA_INITIATOR;
+	}
+
+	/* Try to reserve a RMA buffer */
+	pthread_mutex_lock(&rma_buf->lock);
+	ret = reserve_rma_buffer_locked(rma_buf, rma);
+	if (!ret) {
+		/* Successful, issue RMA Read */
+		pthread_mutex_unlock(&rma_buf->lock);
+
+		ret = post_rma(globals, ep, rma);
+		if (ret) {
+			/* The RMA failed, release the buffer and queue for later */
+			pthread_mutex_lock(&rma_buf->lock);
+			release_rma_buffer_locked(rma_buf, rma);
+			TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
+			pthread_mutex_unlock(&rma_buf->lock);
+		}
+	} else {
+		/* None available, queue for later */
+		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
+		pthread_mutex_unlock(&rma_buf->lock);
+		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, rma);
+	}
+
+    out:
+	return;
+}
+
+static void
 adjust_e2e_mss_rma_mtu(ccir_globals_t *globals, ccir_rconn_t *rconn, cci_e2e_hdr_t *hdr)
 {
 	uint16_t mss = 0;
@@ -1512,6 +1602,9 @@ handle_e2e_recv(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		break;
 	case CCI_E2E_MSG_RMA_WRITE_REQ:
 		handle_e2e_recv_rma_write_request(globals, ep, event);
+		break;
+	case CCI_E2E_MSG_RMA_READ_REQ:
+		handle_e2e_recv_rma_read_request(globals, ep, event);
 		break;
 	default:
 		debug(RDB_E2E, "%s: unhandled %s msg", __func__,
@@ -1575,6 +1668,7 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 	ccir_rma_request_t *rma = CCIR_CTX(event->send.context);
 	cci_e2e_rma_request_t *e2e_req = &rma->e2e_req;
 	cci_connection_t *c = NULL;
+	cci_rma_handle_t *h = NULL;
 	const char *init = NULL, *target = NULL;
 	struct iovec iov[2];
 
@@ -1596,10 +1690,13 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 			next_is_router = 1;
 			c = rma->rconn->src;
 		} else {
-			if (!rma->final)
+			if (!rma->final) {
 				c = rma->rconn->src;
-			else
+				h = rma->rconn->sh;
+			} else {
 				c = rma->rconn->dst;
+				h = rma->rconn->dh;
+			}
 		}
 	} else {
 		init = rma->rconn->client_uri;
@@ -1609,10 +1706,13 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 			next_is_router = 1;
 			c = rma->rconn->dst;
 		} else {
-			if (!rma->final)
+			if (!rma->final) {
 				c = rma->rconn->dst;
-			else
+				h = rma->rconn->dh;
+			} else {
 				c = rma->rconn->src;
+				h = rma->rconn->sh;
+			}
 		}
 	}
 
@@ -1637,17 +1737,9 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 		if (!rma->final) {
 			/* RMA Write to E2E target's buffer */
 
-			int i = 0;
 			uint64_t offset = (uint64_t)rma->idx *
 				(uint64_t) globals->rma_buf->mtu;
 			cci_e2e_rma_request_t req = *e2e_req;
-			ccir_ep_t *e = NULL;
-
-			for (i = 0; i < (int) globals->ep_cnt; i++) {
-				e = globals->eps[i];
-				if (e->e == c->endpoint)
-					break;
-			}
 
 			req.net[8] = cci_e2e_ntohll(req.net[8]);
 			req.net[9] = cci_e2e_ntohll(req.net[9]);
@@ -1655,7 +1747,7 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 
 			rma->final = 1;
 
-			ret = cci_rma(c, NULL, 0, e->h, offset,
+			ret = cci_rma(c, NULL, 0, h, offset,
 					&e2e_req->request.target,
 					req.request.target_offset,
 					req.request.len,
@@ -1703,6 +1795,118 @@ handle_e2e_send_rma_write(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *e
 	return;
 }
 
+/* The RMA Read from the target or previous router has completed,
+ * progress the E2E RMA Read.
+ */
+static void
+handle_e2e_send_rma_read(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
+{
+	int ret = 0, next_is_router = 0;
+	ccir_rma_request_t *rma = CCIR_CTX(event->send.context);
+	cci_e2e_hdr_t *e2e_hdr = &rma->e2e_hdr;
+	cci_e2e_rma_request_t *e2e_req = &rma->e2e_req;
+	cci_connection_t *c = NULL;
+	cci_rma_handle_t *h = NULL;
+	const char *init = NULL, *target = NULL;
+	struct iovec iov[2];
+
+	/* if next is router, then...
+	 *   send RMA_READ_REPLY
+	 * else next is inititator, then...
+	 *   write to initiator's buffer with RMA_ACK
+	 */
+
+	if (rma->src_role == CCIR_RMA_INITIATOR) {
+		init = rma->rconn->client_uri;
+		target = rma->rconn->server_uri;
+
+		if (CCIR_IS_PEER_CTX(rma->rconn->src->context))
+			next_is_router = 1;
+
+		c = rma->rconn->src;
+		h = rma->rconn->sh;
+	} else {
+		init = rma->rconn->server_uri;
+		target = rma->rconn->client_uri;
+
+		if (CCIR_IS_PEER_CTX(rma->rconn->dst->context))
+			next_is_router = 1;
+
+		c = rma->rconn->dst;
+		h = rma->rconn->dh;
+	}
+
+	if (rma->final) {
+		/* We are done, free and exit */
+		free(rma);
+		goto out;
+	}
+
+	if (next_is_router) {
+		/* Send RMA_READ_REPLY to router */
+
+		iov[0].iov_base = &rma->e2e_hdr;
+		iov[0].iov_len = sizeof(rma->e2e_hdr);
+		iov[1].iov_base = &e2e_req->request;
+		iov[1].iov_len = sizeof(e2e_req->request);
+
+		e2e_hdr->net[0] = ntohl(e2e_hdr->net[0]);
+		e2e_hdr->rma.type = CCI_E2E_MSG_RMA_READ_REPLY;
+		e2e_hdr->net[0] = htonl(e2e_hdr->net[0]);
+
+		e2e_req->net[10] = cci_e2e_ntohll(e2e_req->net[10]);
+		e2e_req->request.index = rma->idx;
+		e2e_req->net[10] = cci_e2e_htonll(e2e_req->net[10]);
+		ret = cci_sendv(c, iov, 2, NULL, 0);
+		if (ret) {
+			debug(RDB_E2E, "%s: forwarding RMA Read Reply for rconn %p "
+				"(init/target %s/%s) failed with %s", __func__,
+				(void*)rma->rconn, init, target, cci_strerror(ep->e, ret));
+		}
+		free(rma);
+	} else {
+		/* RMA Write to E2E initiator's buffer */
+		uint64_t offset = (uint64_t)rma->idx * (uint64_t) globals->rma_buf->mtu;
+		cci_e2e_rma_request_t req = *e2e_req;
+		char ack[96];
+		int len = 0;
+
+		req.net[8] = cci_e2e_ntohll(req.net[8]);
+		req.net[9] = cci_e2e_ntohll(req.net[9]);
+		req.net[10] = cci_e2e_ntohll(req.net[10]);
+
+		rma->final = 1;
+
+		memcpy(ack, &e2e_hdr->net[0], sizeof(e2e_hdr->net[0]));
+		e2e_hdr = (void*) ack;
+		e2e_hdr->net[0] = ntohl(e2e_hdr->net[0]);
+		e2e_hdr->rma.type = CCI_E2E_MSG_RMA_ACK;
+		e2e_hdr->net[0] = htonl(e2e_hdr->net[0]);
+
+		len = sizeof(e2e_hdr->rma_size);
+
+		memcpy(&e2e_hdr->rma.data, e2e_req, sizeof(*e2e_req));
+
+		len += sizeof(*e2e_req);
+
+		ret = cci_rma(c, ack, len, h, offset,
+				&e2e_req->request.initiator,
+				req.request.initiator_offset,
+				req.request.len,
+				CCIR_SET_CTX(rma, CCIR_CTX_RMA), CCI_FLAG_WRITE);
+		if (ret) {
+			/* TODO
+			 * debug()
+			 * free(rma)
+			 * disconnect()?
+			 */
+		}
+	}
+
+    out:
+	return;
+}
+
 static void
 handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 {
@@ -1738,11 +1942,7 @@ handle_e2e_send_rma(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 		break;
 	case CCI_E2E_MSG_RMA_READ_REQ:
 	case CCI_E2E_MSG_RMA_READ_REPLY:
-		/* if next is router, then...
-		 *   send RMA_READ_REPLY
-		 * else next is inititator, then...
-		 *   write to initiator's buffer with RMA_ACK
-		 */
+		handle_e2e_send_rma_read(globals, ep, event);
 		break;
 	default:
 		debug(RDB_E2E, "%s: EP %p: Unhandled %s from %s", __func__,
