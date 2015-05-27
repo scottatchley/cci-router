@@ -1449,7 +1449,7 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 	}
 
 	rma->e2e_hdr.net[0] = e2e_hdr->net[0];
-	rma->e2e_req.request = e2e_req->request;
+	memcpy(&rma->e2e_req.request, &e2e_req->request, sizeof(e2e_req->request));
 	rma->rconn = rconn;
 	rma->idx = -1;
 
@@ -1532,7 +1532,7 @@ handle_e2e_recv_rma_read_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_eve
 	}
 
 	rma->e2e_hdr.net[0] = e2e_hdr->net[0];
-	rma->e2e_req.request = e2e_req->request;
+	memcpy(&rma->e2e_req.request, &e2e_req->request, sizeof(e2e_req->request));
 	rma->rconn = rconn;
 	rma->idx = -1;
 
