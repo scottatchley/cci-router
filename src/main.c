@@ -1480,7 +1480,7 @@ handle_e2e_recv_rma_write_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_ev
 		/* None available, queue for later */
 		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
 		pthread_mutex_unlock(&rma_buf->lock);
-		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, rma);
+		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, (void*)rma);
 	}
 
 	return;
@@ -1563,7 +1563,7 @@ handle_e2e_recv_rma_read_request(ccir_globals_t *globals, ccir_ep_t *ep, cci_eve
 		/* None available, queue for later */
 		TAILQ_INSERT_TAIL(&rma_buf->reqs, rma, entry);
 		pthread_mutex_unlock(&rma_buf->lock);
-		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, rma);
+		debug(RDB_E2E, "%s: no buffer for rma %p", __func__, (void*)rma);
 	}
 
     out:
