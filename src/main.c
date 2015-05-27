@@ -2692,7 +2692,7 @@ main(int argc, char *argv[])
 
 	/* Set bits for available fragments - use ffsll() to  find available */
 	for (i = 0; i < rma_buf->num_blocks; i++) {
-		memset(&rma_buf->ids[i], ~0ULL, sizeof(rma_buf->ids[i]));
+		rma_buf->ids[i] = ~(UINT64_C(0));
 		if ((i == rma_buf->num_blocks - 1) && (rma_buf->cnt !=
 			(rma_buf->num_blocks * sizeof(rma_buf->ids[i]) * 8))) {
 
