@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <libgen.h>

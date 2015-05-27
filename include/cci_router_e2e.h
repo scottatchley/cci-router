@@ -40,9 +40,9 @@ typedef struct ccir_rconn {
 	cci_rma_handle_t *sh;	/* Source's RMA handle if peer */
 	cci_rma_handle_t *dh;	/* Destination's RMA handle if peer */
 	ccir_rconn_state_t state; /* State */
-	int is_connecting :  1;	/* Waiting on CONNECT event */
-	int is_accepting  :  1;	/* Waiting on ACCEPT event */
-	int pad		  : 30; /* Reserved */
+	unsigned is_connecting :  1;	/* Waiting on CONNECT event */
+	unsigned is_accepting  :  1;	/* Waiting on ACCEPT event */
+	unsigned pad	       : 30; /* Reserved */
 } ccir_rconn_t;
 
 struct ccir_rma_request {
@@ -52,9 +52,9 @@ struct ccir_rma_request {
 	TAILQ_ENTRY(ccir_rma_request) entry;
 #define CCIR_RMA_INITIATOR	0
 #define CCIR_RMA_TARGET		1
-	int			src_role : 1;	/* INITIATOR or TARGET? */
-	int			dst_role : 1;	/* INITIATOR or TARGET? */
-	int			final    : 1;	/* Set for final RMA op */
+	unsigned		src_role : 1;	/* INITIATOR or TARGET? */
+	unsigned		dst_role : 1;	/* INITIATOR or TARGET? */
+	unsigned		final    : 1;	/* Set for final RMA op */
 	int			idx      :24;	/* Index of RMA buffer */
 	int			pad      : 5;
 };
