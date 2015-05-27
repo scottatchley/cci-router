@@ -383,6 +383,31 @@ out:
 	return;
 }
 
+static const char *
+rconn_state_str(ccir_rconn_t *rconn)
+{
+	if (!rconn)
+		return NULL;
+
+	switch (rconn->state) {
+	case CCIR_RCONN_CLOSED:
+		return "CCIR_RCONN_CLOSED";
+	case CCIR_RCONN_CLOSING:
+		return "CCIR_RCONN_CLOSING";
+	case CCIR_RCONN_INIT:
+		return "CCIR_RCONN_INIT";
+	case CCIR_RCONN_PENDING:
+		return "CCIR_RCONN_PENDING";
+	case CCIR_RCONN_CONNECTED:
+		return "CCIR_RCONN_CONNECTED";
+	default:
+		return "unknown rconn state";
+	}
+
+	/* silence compilers */
+	return NULL;
+}
+
 static void
 shutdown_rconn(ccir_rconn_t *rconn)
 {
@@ -746,9 +771,10 @@ handle_e2e_accept(ccir_globals_t *globals, ccir_ep_t *ep, cci_event_t *event)
 	if (event->accept.status != CCI_SUCCESS ||
 		rconn->state == CCIR_RCONN_CLOSING) {
 
-		debug(RDB_PEER, "%s: accept() failed with %s for connection "
+		debug(RDB_PEER, "%s: accept() failed (state %s) with %s for connection "
 				"from %s to %s", __func__,
 				cci_strerror(ep->e, event->accept.status),
+				rconn_state_str(rconn),
 				rconn->client_uri, rconn->server_uri);
 
 		shutdown_rconn(rconn);
